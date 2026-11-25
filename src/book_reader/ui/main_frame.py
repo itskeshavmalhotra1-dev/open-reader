@@ -638,9 +638,11 @@ class BookReaderFrame(wx.Frame):
     def _on_close(self, event: wx.CloseEvent) -> None:
         self.tts.stop()
         if self.book:
+            raw_pos = self.reader_ctrl.GetInsertionPoint()
+            chap_pos = self._to_chapter_pos(raw_pos)
             self.store.save_position(
                 self.book.source_path,
                 self.current_chapter_idx,
-                self.reader_ctrl.GetInsertionPoint(),
+                chap_pos,
             )
         event.Skip()
