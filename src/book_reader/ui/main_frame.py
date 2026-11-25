@@ -226,8 +226,23 @@ class BookReaderFrame(wx.Frame):
         nav_mode = " | Nav: Single-Key" if self.single_key_nav else ""
         self.SetStatusText(f"{message}  |  Engine: {BACKEND_MODE}{nav_mode}")
 
+    @property
+    def _prefix_len(self) -> int:
+        """Length of the EasyReader navigation marker prefix (marker text + newline)."""
+        if hasattr(self, 'prev_marker'):
+            return len(self.prev_marker) + 1
+        return 0
+
+    def _to_display_pos(self, char_offset: int) -> int:
+        """Convert a chapter character offset to a display position (accounting for the prefix)."""
+        return char_offset + self._prefix_len
+
+    def _to_chapter_pos(self, display_pos: int) -> int:
+        """Convert a display position back to a chapter character offset."""
+        return max(0, display_pos - self._prefix_len)
+
     def _current_location(self) -> NavLocation:
-        return NavLocation(self.current_chapter_idx, self.reader_ctrl.GetInsertionPoint())
+        return NavLocation(self.current_chapter_idx, self._to_chapter_pos(self.reader_ctrl.GetInsertionPoint()))
 
     def jump_to_location(
         self,
@@ -245,8 +260,9 @@ class BookReaderFrame(wx.Frame):
             self.load_chapter(loc.chapter_index, loc.char_offset, announce=False)
         else:
             safe_pos = max(0, min(loc.char_offset, len(self.book.chapters[loc.chapter_index].text)))
-            self.reader_ctrl.SetInsertionPoint(safe_pos)
-            self.reader_ctrl.ShowPosition(safe_pos)
+            display_pos = self._to_display_pos(safe_pos)
+            self.reader_ctrl.SetInsertionPoint(display_pos)
+            self.reader_ctrl.ShowPosition(display_pos)
             self.store.save_position(self.book.source_path, loc.chapter_index, safe_pos)
             self._sync_toc_selection(loc.chapter_index, safe_pos)
 
@@ -315,6 +331,9 @@ class BookReaderFrame(wx.Frame):
             self.toc_tree.SelectItem(best_item)
 
     def load_chapter(self, chapter_index: int, char_offset: int = 0, announce: bool = True) -> None:
+        """Load a chapter (or the whole book) into the reading view.
+        Adds EasyReader‑style navigation markers at the top and bottom so the user can press **Enter** to move to the previous or next chapter.
+        """
         if not self.book or not (0 <= chapter_index < self.book.chapter_count):
             return
         self.tts.stop()
@@ -325,13 +344,22 @@ class BookReaderFrame(wx.Frame):
         self.chapter_lbl.SetLabel(
             f"{self.book.title} ({self.book.format_name}) — Section {chapter_index + 1}/{self.book.chapter_count}: {chap.title}"
         )
-        self.reader_ctrl.SetValue(chap.text)
-        safe_pos = max(0, min(char_offset, len(chap.text)))
+
+        # EasyReader navigation markers
+        self.prev_marker = "Load previous"
+        self.next_marker = "Load next"
+        display_text = f"{self.prev_marker}\n{chap.text}\n{self.next_marker}"
+        self.reader_ctrl.SetValue(display_text)
+
+        # Adjust insertion point to account for the prefix line
+        prefix_len = len(self.prev_marker) + 1  # newline
+        safe_pos = max(0, min(char_offset + prefix_len, len(display_text)))
         self.reader_ctrl.SetInsertionPoint(safe_pos)
         self.reader_ctrl.ShowPosition(safe_pos)
 
-        self.store.save_position(self.book.source_path, chapter_index, safe_pos)
-        self._sync_toc_selection(chapter_index, safe_pos)
+        # Save position without navigation markers
+        self.store.save_position(self.book.source_path, chapter_index, safe_pos - prefix_len)
+        self._sync_toc_selection(chapter_index, safe_pos - prefix_len)
         self._update_status(f"Section {chapter_index + 1}/{self.book.chapter_count}: {chap.title}")
         if announce:
             self.announcer.say(f"Section {chapter_index + 1}: {chap.title}", interrupt=True)
@@ -351,6 +379,54 @@ class BookReaderFrame(wx.Frame):
         else:
             self.toc_tree.SetFocus()
             self.announcer.say("Table of contents", interrupt=True)
+
+    def _on_reader_key_down(self, event: wx.KeyEvent) -> None:
+        """Combined key handler for the reading view.
+        1. Enter/Return on navigation markers loads previous/next chapter.
+        2. Single-key navigation mode (H, 1-6, P, G, I, Backspace).
+        3. Otherwise, let the event propagate.
+        """
+        key = event.GetKeyCode()
+
+        # --- EasyReader Enter-to-navigate on marker lines ---
+        if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and self.book:
+            pos = self.reader_ctrl.GetInsertionPoint()
+            content = self.reader_ctrl.GetValue()
+            lines = content.splitlines()
+            line_no = content[:pos].count('\n')
+            if 0 <= line_no < len(lines):
+                line_text = lines[line_no]
+                if hasattr(self, 'prev_marker') and self.prev_marker in line_text:
+                    self.step_chapter(-1)
+                    return
+                if hasattr(self, 'next_marker') and self.next_marker in line_text:
+                    self.step_chapter(1)
+                    return
+
+        # --- Single-key navigation mode ---
+        if not self.single_key_nav or event.ControlDown() or event.AltDown():
+            event.Skip()
+            return
+        shift = event.ShiftDown()
+        delta = -1 if shift else 1
+
+        if key == ord("H"):
+            self.step_heading(delta)
+        elif ord("1") <= key <= ord("6"):
+            self.step_heading(delta, level=key - ord("0"))
+        elif key == ord("P"):
+            self.step_paragraph(delta)
+        elif key == ord("G"):
+            self._on_go_to_page(event)
+        elif key == ord("I"):
+            self._on_where_am_i(event)
+        elif key == wx.WXK_BACK:
+            if shift:
+                self.go_forward()
+            else:
+                self.go_back()
+        else:
+            event.Skip()
 
     def go_back(self) -> None:
         if not self.book:
@@ -448,31 +524,6 @@ class BookReaderFrame(wx.Frame):
         self._update_status(state)
         self.announcer.say(state, interrupt=True)
 
-    def _on_reader_key_down(self, event: wx.KeyEvent) -> None:
-        if not self.single_key_nav or event.ControlDown() or event.AltDown():
-            event.Skip()
-            return
-        key = event.GetKeyCode()
-        shift = event.ShiftDown()
-        delta = -1 if shift else 1
-
-        if key == ord("H"):
-            self.step_heading(delta)
-        elif ord("1") <= key <= ord("6"):
-            self.step_heading(delta, level=key - ord("0"))
-        elif key == ord("P"):
-            self.step_paragraph(delta)
-        elif key == ord("G"):
-            self._on_go_to_page(event)
-        elif key == ord("I"):
-            self._on_where_am_i(event)
-        elif key == wx.WXK_BACK:
-            if shift:
-                self.go_forward()
-            else:
-                self.go_back()
-        else:
-            event.Skip()
 
     def _sentence_index_at_cursor(self) -> int:
         pos = self.reader_ctrl.GetInsertionPoint()
