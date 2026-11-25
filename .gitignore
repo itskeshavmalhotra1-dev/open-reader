@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.whl
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.coverage
+
+# Rust
+target/
+Cargo.lock
+
+# OS & Secrets
+.DS_Store
+Thumbs.db
+.env
+*.log
+
+# Local user data
+.book_reader_data/

@@ -1,0 +1,13 @@
+[package]
+name = "book_reader_core"
+version = "0.1.0"
+edition = "2021"
+description = "High-speed Rust backend core for Accessible Book Reader (PyO3 extension)"
+
+[lib]
+name = "book_reader_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["extension-module"] }
+quick-xml = "0.36"
