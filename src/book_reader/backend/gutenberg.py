@@ -203,13 +203,33 @@ def search_open_library(query: str = "", subject: str = "", timeout: float = 12.
 
 
 def search_online_library(source_name: str, query: str = "", category: str = "") -> list[CatalogBook]:
-    """Dispatch search to the selected catalog source with category/topic support."""
-    if source_name == "Standard Ebooks":
-        return search_standard_ebooks(query=query)
-    elif "Open Library" in source_name:
-        return search_open_library(query=query, subject=category)
-    else:
-        return search_gutenberg(query=query, topic=category)
+    """Dispatch search to the selected catalog source with category/topic support.
+    Falls back gracefully to curated offline/cache titles if remote server times out.
+    """
+    from book_reader.backend.curated_books import CURATED_CATEGORY_BOOKS
+
+    # If browsing category with no query, return curated category books immediately or as base
+    cat_key = category if category in CURATED_CATEGORY_BOOKS else "Popular Classics (All)"
+
+    try:
+        if source_name == "Standard Ebooks":
+            results = search_standard_ebooks(query=query)
+        elif "Open Library" in source_name:
+            results = search_open_library(query=query, subject=category)
+        else:
+            results = search_gutenberg(query=query, topic=category)
+        if results:
+            return results
+    except Exception:
+        pass
+
+    # Safe fallback if network/Gutendex times out
+    curated = CURATED_CATEGORY_BOOKS.get(cat_key, CURATED_CATEGORY_BOOKS["Popular Classics (All)"])
+    if query.strip():
+        q_lower = query.strip().lower()
+        matched = [b for b in curated if q_lower in b.title.lower() or any(q_lower in a.lower() for a in b.authors)]
+        return matched if matched else curated
+    return curated
 
 
 def download_catalog_book(
