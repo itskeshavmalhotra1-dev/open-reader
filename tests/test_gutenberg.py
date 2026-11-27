@@ -151,6 +151,57 @@ def test_download_catalog_book_mock(tmp_path: Path) -> None:
         assert out_file.read_bytes() == b"epub-data-content"
 
 
+def test_download_gutenberg_pglaf_mirror_used(tmp_path: Path) -> None:
+    book = CatalogBook(
+        id=84,
+        title="Frankenstein",
+        authors=["Mary Shelley"],
+        languages=["en"],
+        formats={"application/epub+zip": "https://www.gutenberg.org/ebooks/84.epub3.images"},
+        download_count=1000,
+        source="Project Gutenberg",
+    )
+    mock_resp = MagicMock()
+    mock_resp.read.side_effect = [b"frankenstein-epub-bytes", b""]
+    mock_resp.headers = {"Content-Length": "23"}
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp) as mock_url:
+        out_file = download_catalog_book(book, tmp_path)
+        assert out_file.exists()
+        assert out_file.suffix == ".epub"
+        called_req = mock_url.call_args[0][0]
+        assert "gutenberg.pglaf.org" in called_req.full_url
+
+
+def test_download_fallback_when_first_url_returns_503(tmp_path: Path) -> None:
+    from urllib.error import HTTPError
+
+    book = CatalogBook(
+        id=84,
+        title="Frankenstein",
+        authors=["Mary Shelley"],
+        languages=["en"],
+        formats={"application/epub+zip": "https://www.gutenberg.org/ebooks/84.epub3.images"},
+        download_count=1000,
+        source="Project Gutenberg",
+    )
+    mock_resp = MagicMock()
+    mock_resp.read.side_effect = [b"epub-content", b""]
+    mock_resp.headers = {"Content-Length": "12"}
+    mock_resp.__enter__.return_value = mock_resp
+
+    def side_effect(req, *args, **kwargs):
+        if "pg84.epub" in req.full_url:
+            raise HTTPError(req.full_url, 503, "Service Unavailable", {}, None)
+        return mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", side_effect=side_effect):
+        out_file = download_catalog_book(book, tmp_path)
+        assert out_file.exists()
+        assert out_file.read_bytes() == b"epub-content"
+
+
 def test_online_libraries_dialog_status_and_info(tmp_path: Path) -> None:
     import wx
     from book_reader.ui.dialogs import OnlineLibrariesDialog

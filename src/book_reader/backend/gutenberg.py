@@ -281,39 +281,86 @@ def download_catalog_book(
     progress_cb=None,
     timeout: float = 30.0,
 ) -> Path:
-    """Download the chosen catalog book (prefers EPUB, falls back to TXT)."""
-    download_url = book.epub_url or book.text_url
-    if not download_url:
+    """Download the chosen catalog book with multi-mirror resilience (prefers EPUB, falls back to TXT)."""
+    candidates: list[str] = []
+
+    b_id = str(book.id).strip()
+    is_gutenberg = (
+        book.source == "Project Gutenberg"
+        or "gutenberg" in str(book.source).lower()
+        or any("gutenberg" in str(v).lower() for v in book.formats.values())
+    )
+
+    if is_gutenberg:
+        # Extract numeric Gutenberg book ID
+        match = re.search(r"/epub/(\d+)|/ebooks/(\d+)|pg(\d+)", f"{book.epub_url or ''} {book.text_url or ''} {b_id}")
+        digit_id = (next((g for g in match.groups() if g is not None), None) if match else None) or (b_id if b_id.isdigit() else None)
+        if digit_id:
+            # Project Gutenberg Literary Archive Foundation (PGLAF) direct mirror.
+            # Avoids Cloudflare rate-limiting / HTTP 503 Service Unavailable on www.gutenberg.org
+            candidates.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}.epub")
+            candidates.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}-images.epub")
+            if book.epub_url and book.epub_url not in candidates:
+                candidates.append(book.epub_url)
+            candidates.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}.txt")
+            if book.text_url and book.text_url not in candidates:
+                candidates.append(book.text_url)
+
+    if not candidates:
+        if book.epub_url:
+            candidates.append(book.epub_url)
+        if book.text_url and book.text_url not in candidates:
+            candidates.append(book.text_url)
+
+    if not candidates:
         raise ValueError(f"No suitable download format found for '{book.title}'")
 
-    ext = ".epub" if book.epub_url else ".txt"
-    safe_title = re.sub(r'[\\/*?:"<>|]', "_", book.title)[:60].strip()
-    clean_id = re.sub(r'[\\/*?:"<>|]', "_", str(book.id))[:30].strip()
-    filename = f"{safe_title}_{clean_id}{ext}"
+    safe_title = re.sub(r'[\\/*?:"<>|]', "_", book.title)[:60].strip() or "book"
+    clean_id = re.sub(r'[\\/*?:"<>|]', "_", str(book.id))[:30].strip() or "item"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    target_path = dest_dir / filename
-    temp_path = dest_dir / f"{filename}.part"
 
-    req = Request(
-        download_url,
-        headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
-    )
-    with urlopen(req, timeout=timeout) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        downloaded = 0
-        with open(temp_path, "wb") as f:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                f.write(chunk)
-                downloaded += len(chunk)
-                if progress_cb:
-                    progress_cb(downloaded, total)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Open-Reader/26.0",
+        "Accept": "application/epub+zip, application/octet-stream, text/plain, */*",
+    }
 
-    if temp_path.exists():
-        temp_path.replace(target_path)
-    return target_path
+    last_error: Exception | None = None
+    for candidate_url in candidates:
+        ext = ".epub" if "epub" in candidate_url.lower() else (".txt" if "txt" in candidate_url.lower() else ".epub")
+        filename = f"{safe_title}_{clean_id}{ext}"
+        target_path = dest_dir / filename
+        temp_path = dest_dir / f"{filename}.part"
+
+        try:
+            req = Request(candidate_url, headers=headers)
+            with urlopen(req, timeout=timeout) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
+                downloaded = 0
+                with open(temp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_cb:
+                            progress_cb(downloaded, total)
+
+            if downloaded > 0 and temp_path.exists():
+                temp_path.replace(target_path)
+                return target_path
+        except Exception as exc:
+            last_error = exc
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+            continue
+
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"Failed to download '{book.title}' from available catalog sources.")
 
 
 # Backward compatibility aliases
