@@ -1270,6 +1270,9 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.download_dir = download_dir
         self.books: list[CatalogBook] = []
         self.downloaded_path: Path | None = None
+        self._search_seq: int = 0
+        self._lock = threading.Lock()
+        self._is_active = True
 
         panel = wx.Panel(self)
         vbox = wx.BoxSizer(wx.VERTICAL)
@@ -1344,9 +1347,16 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.results_list.Bind(wx.EVT_LISTBOX, self._on_select)
         self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self._on_download)
         self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
+        self.Bind(wx.EVT_CLOSE, self._on_close)
 
         # Auto-load initial popular titles from selected library on open
         wx.CallAfter(self._trigger_load)
+
+    def _on_close(self, event: wx.CloseEvent) -> None:
+        with self._lock:
+            self._is_active = False
+            self._search_seq += 1
+        event.Skip()
 
     def _on_lib_changed(self, _event: wx.Event) -> None:
         lib_name = self.lib_choice.GetStringSelection()
@@ -1365,6 +1375,12 @@ class OnlineLibrariesDialog(wx.Dialog):
     def _trigger_load(self) -> None:
         from book_reader.backend.gutenberg import search_online_library
         import threading
+
+        with self._lock:
+            if not self._is_active:
+                return
+            self._search_seq += 1
+            current_seq = self._search_seq
 
         lib_name = self.lib_choice.GetStringSelection()
         cat_name = self.cat_choice.GetStringSelection() if self.cat_choice.IsEnabled() else ""
@@ -1386,13 +1402,19 @@ class OnlineLibrariesDialog(wx.Dialog):
         def worker() -> None:
             try:
                 results = search_online_library(lib_name, query=query, category=cat_name)
-                wx.CallAfter(self._populate_results, results)
+                wx.CallAfter(self._populate_results, results, current_seq)
             except Exception as e:
-                wx.CallAfter(self._search_failed, str(e))
+                wx.CallAfter(self._search_failed, str(e), current_seq)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _populate_results(self, results: list) -> None:
+    def _populate_results(self, results: list, seq: int) -> None:
+        with self._lock:
+            if not self._is_active or seq != self._search_seq:
+                return
+        if not self:
+            return
+
         self.search_btn.Enable(True)
         self.books = results
         self.results_list.Clear()
@@ -1410,7 +1432,12 @@ class OnlineLibrariesDialog(wx.Dialog):
         self._update_details()
         self.results_list.SetFocus()
 
-    def _search_failed(self, error: str) -> None:
+    def _search_failed(self, error: str, seq: int) -> None:
+        with self._lock:
+            if not self._is_active or seq != self._search_seq:
+                return
+        if not self:
+            return
         self.search_btn.Enable(True)
         self.status_lbl.SetLabel(f"Search failed: {error}")
 

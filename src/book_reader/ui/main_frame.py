@@ -903,21 +903,20 @@ class BookReaderFrame(wx.Frame):
         def _on_progress(downloaded: int, total: int) -> bool:
             nonlocal cancelled
             pct = min(99, int((downloaded * 100) / total)) if total > 0 else 0
-            cont_holder = [True]
 
             def _update_dlg() -> None:
+                nonlocal cancelled
                 if progress:
                     cont, _ = progress.Update(
                         pct,
                         f"Downloaded {downloaded // 1024} KB"
                         + (f" of {total // 1024} KB" if total > 0 else "..."),
                     )
-                    cont_holder[0] = cont
+                    if not cont:
+                        cancelled = True
 
             wx.CallAfter(_update_dlg)
-            if cancelled:
-                return False
-            return cont_holder[0]
+            return not cancelled
 
         def _worker() -> None:
             dest_dir = Path(tempfile.gettempdir()) / "OpenReaderUpdate"
