@@ -200,11 +200,15 @@ class SettingsDialog(wx.Dialog):
         voices: list[VoiceInfo],
         on_scan_folder: Any = None,
         tts_controller: Any = None,
+        default_download_dir: Path | None = None,
     ) -> None:
-        super().__init__(parent, title="Settings", size=(560, 480))
+        super().__init__(parent, title="Settings", size=(580, 520))
+        from book_reader.backend.storage import default_data_dir
+
         self._voices = voices
         self._on_scan_folder = on_scan_folder
         self._tts_controller = tts_controller
+        self._default_download_dir = str(default_download_dir or (default_data_dir() / "downloads"))
 
         main_panel = wx.Panel(self)
         vbox = wx.BoxSizer(wx.VERTICAL)
@@ -314,21 +318,53 @@ class SettingsDialog(wx.Dialog):
         lib_tab = wx.Panel(self.notebook)
         lib_vbox = wx.BoxSizer(wx.VERTICAL)
 
-        self.auto_save_cb = wx.CheckBox(lib_tab, label="&Auto-save opened books to Library without asking")
+        # Group 1: Local Library (Bookshelf)
+        local_box = wx.StaticBoxSizer(wx.VERTICAL, lib_tab, "Local Library (Bookshelf)")
+        local_parent = local_box.GetStaticBox()
+
+        self.auto_save_cb = wx.CheckBox(local_parent, label="&Auto-save opened books to Library without asking")
         self.auto_save_cb.SetValue(bool(prefs.get("auto_save_library", False)))
         self.auto_save_cb.SetName("Auto-save opened books to library")
-        lib_vbox.Add(self.auto_save_cb, 0, wx.ALL, 12)
+        local_box.Add(self.auto_save_cb, 0, wx.ALL, 8)
 
-        # Online Libraries Download Destination Folder
-        dl_box = wx.StaticBoxSizer(wx.VERTICAL, lib_tab, "Online Libraries Download Destination")
+        scan_lbl = wx.StaticText(local_parent, label="Local folder to scan for books:")
+        local_box.Add(scan_lbl, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
+        f_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.folder_text = wx.TextCtrl(local_parent, value=str(prefs.get("library_folder", "")))
+        self.folder_text.SetName("Local folder path to scan for books")
+        browse_btn = wx.Button(local_parent, label="&Browse Folder...")
+        browse_btn.SetName("Browse local folder to scan books into library")
+        scan_btn = wx.Button(local_parent, label="Scan &Now")
+        scan_btn.SetName("Scan local folder now and import books into library")
+
+        f_row.Add(self.folder_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
+        f_row.Add(browse_btn, 0, wx.RIGHT, 6)
+        f_row.Add(scan_btn, 0)
+        local_box.Add(f_row, 0, wx.EXPAND | wx.ALL, 8)
+
+        self.scan_status_ctrl = wx.StaticText(
+            local_parent,
+            label="Select a folder containing e-books to import them into your library.",
+        )
+        local_box.Add(self.scan_status_ctrl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        lib_vbox.Add(local_box, 0, wx.EXPAND | wx.ALL, 10)
+
+        # Group 2: Online Libraries Downloads
+        dl_box = wx.StaticBoxSizer(wx.VERTICAL, lib_tab, "Online Libraries Downloads")
         dl_parent = dl_box.GetStaticBox()
+
+        dl_lbl = wx.StaticText(dl_parent, label="Download destination folder:")
+        dl_box.Add(dl_lbl, 0, wx.LEFT | wx.RIGHT | wx.TOP, 8)
+
         dl_row = wx.BoxSizer(wx.HORIZONTAL)
-        self.dl_folder_text = wx.TextCtrl(dl_parent, value=str(prefs.get("online_download_dir", "")))
-        self.dl_folder_text.SetName("Online libraries download destination folder")
-        self.dl_browse_btn = wx.Button(dl_parent, label="&Browse Destination...")
-        self.dl_browse_btn.SetName("Browse destination folder for downloaded online books")
-        self.dl_reset_btn = wx.Button(dl_parent, label="&Reset Default")
-        self.dl_reset_btn.SetName("Reset destination folder to application default")
+        active_dl = str(prefs.get("online_download_dir", "")).strip() or self._default_download_dir
+        self.dl_folder_text = wx.TextCtrl(dl_parent, value=active_dl)
+        self.dl_folder_text.SetName("Online books download destination folder path")
+        self.dl_browse_btn = wx.Button(dl_parent, label="Change &Download Folder...")
+        self.dl_browse_btn.SetName("Change destination folder for downloaded online books")
+        self.dl_reset_btn = wx.Button(dl_parent, label="&Reset to Default")
+        self.dl_reset_btn.SetName("Reset download folder to default location")
 
         dl_row.Add(self.dl_folder_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         dl_row.Add(self.dl_browse_btn, 0, wx.RIGHT, 6)
@@ -337,30 +373,11 @@ class SettingsDialog(wx.Dialog):
 
         dl_hint = wx.StaticText(
             dl_parent,
-            label="Books downloaded from online libraries (Gutenberg, Standard Ebooks, Open Library) will be saved here.\n(Leave blank to use default app downloads folder).",
+            label="Books downloaded from online libraries will be saved in this folder.",
         )
         dl_box.Add(dl_hint, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-        lib_vbox.Add(dl_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
+        lib_vbox.Add(dl_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
-        folder_box = wx.StaticBoxSizer(wx.VERTICAL, lib_tab, "Library Books Folder Scanner")
-        box_parent = folder_box.GetStaticBox()
-        f_row = wx.BoxSizer(wx.HORIZONTAL)
-        self.folder_text = wx.TextCtrl(box_parent, value=str(prefs.get("library_folder", "")))
-        self.folder_text.SetName("Library folder path")
-        browse_btn = wx.Button(box_parent, label="&Browse...")
-        browse_btn.SetName("Browse folder to scan books into library")
-        scan_btn = wx.Button(box_parent, label="&Scan Now")
-        scan_btn.SetName("Scan folder now and import books into library")
-
-        f_row.Add(self.folder_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        f_row.Add(browse_btn, 0, wx.RIGHT, 6)
-        f_row.Add(scan_btn, 0)
-        folder_box.Add(f_row, 1, wx.EXPAND | wx.ALL, 8)
-
-        self.scan_status_ctrl = wx.StaticText(box_parent, label="Select a folder containing e-books to import them into your library.")
-        folder_box.Add(self.scan_status_ctrl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
-
-        lib_vbox.Add(folder_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         lib_tab.SetSizer(lib_vbox)
         self.notebook.AddPage(lib_tab, "Library")
 
@@ -389,7 +406,7 @@ class SettingsDialog(wx.Dialog):
                 self.dl_folder_text.SetValue(dlg.GetPath())
 
     def _on_reset_download_folder(self, _event: wx.Event) -> None:
-        self.dl_folder_text.SetValue("")
+        self.dl_folder_text.SetValue(self._default_download_dir)
 
     def _on_browse_folder(self, _event: wx.Event) -> None:
         with wx.DirDialog(self, "Choose Library Folder", style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dlg:
@@ -551,6 +568,9 @@ class SettingsDialog(wx.Dialog):
         sel = self.voice_choice.GetSelection()
         voice_id = self._active_voices[sel - 1].voice_id if sel > 0 and sel - 1 < len(self._active_voices) else ""
         engine = self.engine_options[self.engine_choice.GetSelection()][0]
+        dl_val = self.dl_folder_text.GetValue().strip()
+        if dl_val == self._default_download_dir:
+            dl_val = ""
         return {
             "font_size": self.font_spin.GetValue(),
             "high_contrast": self.contrast_cb.GetValue(),
@@ -559,7 +579,7 @@ class SettingsDialog(wx.Dialog):
             "tts_engine": engine,
             "library_folder": self.folder_text.GetValue().strip(),
             "auto_save_library": self.auto_save_cb.GetValue(),
-            "online_download_dir": self.dl_folder_text.GetValue().strip(),
+            "online_download_dir": dl_val,
         }
 
 
@@ -1417,12 +1437,7 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.details_ctrl.SetName("Book details")
         vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
-        # Buttons & destination folder row
-        bottom_box = wx.BoxSizer(wx.HORIZONTAL)
-        self.dest_lbl = wx.StaticText(panel, label=f"Saving to: {self.download_dir}")
-        self.dest_lbl.SetName("Download destination folder")
-        bottom_box.Add(self.dest_lbl, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
-
+        # Buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.download_btn = wx.Button(panel, wx.ID_OK, "&Download and Read")
         self.download_btn.Enable(False)
@@ -1430,8 +1445,7 @@ class OnlineLibrariesDialog(wx.Dialog):
         cancel_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
         btn_sizer.Add(self.download_btn, 0, wx.RIGHT, 8)
         btn_sizer.Add(cancel_btn, 0)
-        bottom_box.Add(btn_sizer, 0)
-        vbox.Add(bottom_box, 0, wx.EXPAND | wx.ALL, 8)
+        vbox.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
 
         panel.SetSizer(vbox)
 

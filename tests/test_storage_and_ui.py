@@ -126,11 +126,12 @@ def test_settings_engine_status_and_piper_manager_dialog() -> None:
         assert dlg.manage_piper_btn.IsEnabled()
 
         # Test online download destination controls
-        assert dlg.dl_folder_text.GetValue() == ""
+        assert dlg.dl_folder_text.GetValue() == dlg._default_download_dir
+        assert dlg.get_updated_prefs()["online_download_dir"] == ""
         dlg.dl_folder_text.SetValue("C:\\MyDownloadedBooks")
         assert dlg.get_updated_prefs()["online_download_dir"] == "C:\\MyDownloadedBooks"
         dlg._on_reset_download_folder(None)
-        assert dlg.dl_folder_text.GetValue() == ""
+        assert dlg.dl_folder_text.GetValue() == dlg._default_download_dir
         assert dlg.get_updated_prefs()["online_download_dir"] == ""
     finally:
         dlg.Destroy()

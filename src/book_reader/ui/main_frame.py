@@ -821,6 +821,7 @@ class BookReaderFrame(wx.Frame):
             voices,
             on_scan_folder=self.store.scan_folder_into_library,
             tts_controller=self.tts,
+            default_download_dir=self.store.data_dir / "downloads",
         ) as dlg:
             if dlg.ShowModal() == wx.ID_OK:
                 self.store.data["preferences"] = dlg.get_updated_prefs()
