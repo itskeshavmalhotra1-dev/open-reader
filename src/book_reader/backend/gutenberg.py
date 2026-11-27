@@ -44,6 +44,28 @@ class CatalogBook:
         return None
 
     @property
+    def pdf_url(self) -> str | None:
+        """Get PDF download URL."""
+        for mime in ("application/pdf", "pdf"):
+            if mime in self.formats:
+                return self.formats[mime]
+        for k, v in self.formats.items():
+            if "pdf" in k.lower():
+                return v
+        return None
+
+    @property
+    def html_url(self) -> str | None:
+        """Get HTML download URL."""
+        for mime in ("text/html", "html"):
+            if mime in self.formats:
+                return self.formats[mime]
+        for k, v in self.formats.items():
+            if "html" in k.lower():
+                return v
+        return None
+
+    @property
     def text_url(self) -> str | None:
         """Get plain text fallback URL."""
         for k, v in self.formats.items():
@@ -74,6 +96,21 @@ GUTENBERG_CATEGORIES = [
     "Poetry",
     "Short Stories",
     "Children's Literature",
+]
+
+WIKISOURCE_CATEGORIES = [
+    "Hindi Wikisource (हिन्दी)",
+    "Urdu Wikisource (اردو)",
+    "English Wikisource",
+]
+
+OPENSTAX_CATEGORIES = [
+    "All Subjects",
+    "Math & Statistics",
+    "Science (Physics, Chemistry, Biology)",
+    "Business & Economics",
+    "Social Sciences & Humanities",
+    "Computer Science & Engineering",
 ]
 
 
@@ -260,6 +297,147 @@ def fetch_open_library_page(
     )
 
 
+def fetch_wikisource_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Search and browse multilingual public domain works from Wikisource (Hindi, Urdu, English)."""
+    cat_lower = category.lower()
+    if "urdu" in cat_lower or "اردو" in category:
+        lang = "ur"
+        default_query = "دیوان"
+    elif "hindi" in cat_lower or "हिन्दी" in category:
+        lang = "hi"
+        default_query = "प्रेमचंद"
+    else:
+        lang = "en"
+        default_query = "classic"
+
+    search_term = query.strip() or default_query
+    encoded = urllib.parse.quote_plus(search_term)
+    offset = max(0, (page - 1) * limit)
+
+    url = (
+        f"https://{lang}.wikisource.org/w/api.php?action=query&list=search"
+        f"&srsearch={encoded}&sroffset={offset}&srlimit={limit}&format=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    search_info = data.get("query", {}).get("searchinfo", {})
+    total = int(search_info.get("totalhits", 0))
+    raw_results = data.get("query", {}).get("search", [])
+
+    books: list[CatalogBook] = []
+    for item in raw_results:
+        title = item.get("title", "Untitled")
+        page_id = item.get("pageid", 0)
+        encoded_title = urllib.parse.quote_plus(title)
+        fetch_url = f"https://{lang}.wikisource.org/w/api.php?action=parse&page={encoded_title}&prop=text&format=json"
+        formats = {
+            "text/html": fetch_url,
+            "text/plain": f"https://{lang}.wikisource.org/w/index.php?title={encoded_title}&action=raw",
+        }
+        lang_name = "Hindi" if lang == "hi" else ("Urdu" if lang == "ur" else "English")
+        books.append(
+            CatalogBook(
+                id=f"wikisource_{lang}_{page_id}",
+                title=title,
+                authors=[f"Wikisource ({lang_name})"],
+                languages=[lang],
+                formats=formats,
+                download_count=0,
+                source=f"Wikisource ({lang_name})",
+            )
+        )
+
+    has_next = (offset + limit) < total
+    has_prev = page > 1
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=has_next,
+        has_previous=has_prev,
+    )
+
+
+def fetch_openstax_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch free peer-reviewed college textbooks from OpenStax."""
+    params = ["type=books.Book", "limit=150", "fields=title,slug,high_resolution_pdf_url,pdf_url"]
+    if query.strip():
+        params.append(f"search={urllib.parse.quote_plus(query.strip())}")
+
+    url = f"https://openstax.org/apps/cms/api/v2/pages/?{'&'.join(params)}"
+    req = Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Open-Reader/26.0"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    all_items = data.get("items", [])
+    cat_lower = category.lower()
+
+    filtered: list[CatalogBook] = []
+    for it in all_items:
+        t = it.get("title", "")
+        t_low = t.lower()
+        if category and category != "All Subjects":
+            if "math" in cat_lower and not any(w in t_low for w in ["math", "algebra", "calculus", "statistic", "trigonometry", "precalculus"]):
+                continue
+            if "science" in cat_lower and not any(w in t_low for w in ["physics", "chemistry", "biology", "astronomy", "anatomy", "microbiology", "organic"]):
+                continue
+            if "business" in cat_lower and not any(w in t_low for w in ["business", "economics", "accounting", "finance", "management", "entrepreneurship"]):
+                continue
+            if "social" in cat_lower and not any(w in t_low for w in ["history", "psychology", "sociology", "government", "political", "anthropology"]):
+                continue
+            if "computer" in cat_lower and not any(w in t_low for w in ["computer", "programming", "python", "data", "engineering", "information"]):
+                continue
+
+        pdf_url = it.get("high_resolution_pdf_url") or it.get("pdf_url")
+        if not pdf_url:
+            continue
+
+        filtered.append(
+            CatalogBook(
+                id=it.get("id", t),
+                title=t,
+                authors=["OpenStax"],
+                languages=["en"],
+                formats={"application/pdf": pdf_url},
+                download_count=10000,
+                source="OpenStax",
+            )
+        )
+
+    total = len(filtered)
+    start = max(0, (page - 1) * limit)
+    paged = filtered[start : start + limit]
+
+    return CatalogPage(
+        books=paged,
+        total_count=total,
+        current_page=page,
+        has_next=(start + limit) < total,
+        has_previous=page > 1,
+    )
+
+
 def fetch_online_catalog_page(
     source_name: str,
     query: str = "",
@@ -271,6 +449,10 @@ def fetch_online_catalog_page(
         return fetch_standard_ebooks_page(query=query, page=page)
     elif "Open Library" in source_name:
         return fetch_open_library_page(query=query, subject=category, page=page)
+    elif "Wikisource" in source_name:
+        return fetch_wikisource_page(query=query, category=category, page=page)
+    elif "OpenStax" in source_name:
+        return fetch_openstax_page(query=query, category=category, page=page)
     else:
         return fetch_gutenberg_page(query=query, topic=category, page=page)
 
@@ -281,7 +463,7 @@ def download_catalog_book(
     progress_cb=None,
     timeout: float = 30.0,
 ) -> Path:
-    """Download the chosen catalog book with multi-mirror resilience (prefers EPUB, falls back to TXT)."""
+    """Download the chosen catalog book with multi-mirror resilience (prefers EPUB, falls back to TXT/PDF/HTML)."""
     candidates: list[str] = []
 
     b_id = str(book.id).strip()
@@ -309,6 +491,10 @@ def download_catalog_book(
     if not candidates:
         if book.epub_url:
             candidates.append(book.epub_url)
+        if book.pdf_url and book.pdf_url not in candidates:
+            candidates.append(book.pdf_url)
+        if book.html_url and book.html_url not in candidates:
+            candidates.append(book.html_url)
         if book.text_url and book.text_url not in candidates:
             candidates.append(book.text_url)
 
@@ -321,12 +507,44 @@ def download_catalog_book(
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Open-Reader/26.0",
-        "Accept": "application/epub+zip, application/octet-stream, text/plain, */*",
+        "Accept": "application/epub+zip, application/pdf, text/html, application/octet-stream, text/plain, */*",
     }
 
     last_error: Exception | None = None
     for candidate_url in candidates:
-        ext = ".epub" if "epub" in candidate_url.lower() else (".txt" if "txt" in candidate_url.lower() else ".epub")
+        # Handle Wikisource Parse API (extracts full rendered HTML document)
+        if "wikisource.org" in candidate_url and "action=parse" in candidate_url:
+            try:
+                req = Request(candidate_url, headers=headers)
+                with urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw_html = data.get("parse", {}).get("text", {}).get("*", "")
+                    if not raw_html:
+                        raise ValueError(f"No text content returned for {book.title}")
+                    full_html = (
+                        f"<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n"
+                        f"<title>{book.title}</title>\n</head>\n<body>\n<h1>{book.title}</h1>\n"
+                        f"{raw_html}\n</body>\n</html>"
+                    )
+                    ext = ".html"
+                    filename = f"{safe_title}_{clean_id}{ext}"
+                    target_path = dest_dir / filename
+                    temp_path = dest_dir / f"{filename}.part"
+                    temp_path.write_text(full_html, encoding="utf-8")
+                    if progress_cb:
+                        progress_cb(len(full_html), len(full_html))
+                    temp_path.replace(target_path)
+                    return target_path
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        ext = (
+            ".pdf" if "pdf" in candidate_url.lower()
+            else (".epub" if "epub" in candidate_url.lower()
+            else (".html" if "html" in candidate_url.lower()
+            else (".txt" if "txt" in candidate_url.lower() else ".epub")))
+        )
         filename = f"{safe_title}_{clean_id}{ext}"
         target_path = dest_dir / filename
         temp_path = dest_dir / f"{filename}.part"

@@ -1287,6 +1287,8 @@ class OnlineLibrariesDialog(wx.Dialog):
         "Project Gutenberg",
         "Standard Ebooks",
         "Open Library / Internet Archive",
+        "Wikisource (Hindi, Urdu, English)",
+        "OpenStax (Academic Textbooks)",
     ]
 
     LIBRARY_INFO = {
@@ -1307,6 +1309,18 @@ class OnlineLibrariesDialog(wx.Dialog):
             "formats": "EPUB, Text, DJVU",
             "description": "Open editable library catalog backed by the Internet Archive. Search across millions of historical titles and full-text digitized public books.",
             "access": "Free public domain & full-text archive reading, no account required for public editions.",
+        },
+        "Wikisource (Hindi, Urdu, English)": {
+            "status": "Online • Multilingual Public Domain & Indian Classics",
+            "formats": "HTML, Plain Text",
+            "description": "Wikimedia free digital library. Search and read lakhs of classic works in Hindi (Premchand, Kabir, Tulsi), Urdu (Ghalib, Iqbal, Mir), English, and Sanskrit.",
+            "access": "100% Free public domain, no account required.",
+        },
+        "OpenStax (Academic Textbooks)": {
+            "status": "Online • 120+ Free Peer-Reviewed College Textbooks",
+            "formats": "PDF",
+            "description": "Rice University's open textbook library. College-level textbooks for Calculus, Physics, Biology, Chemistry, Anatomy, Economics, History, and Computing.",
+            "access": "100% Free Open Educational Resources (OER), peer-reviewed.",
         },
     }
 
@@ -1462,10 +1476,29 @@ class OnlineLibrariesDialog(wx.Dialog):
 
     def _on_lib_changed(self, _event: wx.Event) -> None:
         lib_name = self.lib_choice.GetStringSelection()
+        from book_reader.backend.gutenberg import (
+            GUTENBERG_CATEGORIES,
+            OPENSTAX_CATEGORIES,
+            WIKISOURCE_CATEGORIES,
+        )
+        self.cat_choice.Clear()
         if "Gutenberg" in lib_name:
+            self.cat_choice.Append(GUTENBERG_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "Wikisource" in lib_name:
+            self.cat_choice.Append(WIKISOURCE_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "OpenStax" in lib_name:
+            self.cat_choice.Append(OPENSTAX_CATEGORIES)
+            self.cat_choice.SetSelection(0)
             self.cat_choice.Enable(True)
         else:
+            self.cat_choice.Append(["All Topics"])
+            self.cat_choice.SetSelection(0)
             self.cat_choice.Enable(False)
+
         self._update_library_info()
         self.status_lbl.SetLabel(f"Selected {lib_name}")
 
@@ -1586,7 +1619,12 @@ class OnlineLibrariesDialog(wx.Dialog):
         idx = self.results_list.GetSelection()
         if 0 <= idx < len(self.books):
             b = self.books[idx]
-            fmt = "EPUB" if b.epub_url else ("TXT" if b.text_url else "Unknown")
+            fmt = (
+                "EPUB" if b.epub_url
+                else ("PDF" if getattr(b, "pdf_url", None)
+                else ("HTML" if getattr(b, "html_url", None)
+                else ("TXT" if b.text_url else "Unknown")))
+            )
             details = (
                 f"Title: {b.title}\n"
                 f"Author: {b.author_display}\n"

@@ -233,7 +233,110 @@ def test_online_libraries_dialog_status_and_info(tmp_path: Path) -> None:
             info_ol = dlg.lib_info_ctrl.GetValue()
             assert "Open Library" in info_ol
             assert "Internet Archive" in info_ol
+
+        # Switch to Wikisource
+        idx_ws = dlg.lib_choice.FindString("Wikisource (Hindi, Urdu, English)")
+        if idx_ws != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_ws)
+            dlg._on_lib_changed(None)
+            info_ws = dlg.lib_info_ctrl.GetValue()
+            assert "Wikisource" in info_ws
+            assert dlg.cat_choice.IsEnabled()
+
+        # Switch to OpenStax
+        idx_ox = dlg.lib_choice.FindString("OpenStax (Academic Textbooks)")
+        if idx_ox != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_ox)
+            dlg._on_lib_changed(None)
+            info_ox = dlg.lib_info_ctrl.GetValue()
+            assert "OpenStax" in info_ox
+            assert dlg.cat_choice.IsEnabled()
     finally:
         dlg.Destroy()
         app.ProcessPendingEvents()
+
+
+def test_fetch_wikisource_page_mock() -> None:
+    from book_reader.backend.gutenberg import fetch_wikisource_page
+
+    sample_search = {
+        "query": {
+            "searchinfo": {"totalhits": 45},
+            "search": [
+                {"title": "Godan", "pageid": 1234},
+                {"title": "Gaban", "pageid": 5678},
+            ],
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_search).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        page = fetch_wikisource_page(query="Godan", category="Hindi Wikisource (हिन्दी)", page=1)
+        assert len(page.books) == 2
+        assert page.total_count == 45
+        assert page.books[0].title == "Godan"
+        assert page.books[0].source == "Wikisource (Hindi)"
+        assert page.books[0].html_url is not None
+
+
+def test_fetch_openstax_page_mock() -> None:
+    from book_reader.backend.gutenberg import fetch_openstax_page
+
+    sample_cms = {
+        "items": [
+            {
+                "id": 873,
+                "title": "Calculus Volume 1",
+                "pdf_url": "https://assets.openstax.org/calc1.pdf",
+                "high_resolution_pdf_url": "https://assets.openstax.org/calc1.pdf",
+            },
+            {
+                "id": 874,
+                "title": "University Physics",
+                "pdf_url": "https://assets.openstax.org/physics.pdf",
+                "high_resolution_pdf_url": "https://assets.openstax.org/physics.pdf",
+            },
+        ]
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_cms).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        page = fetch_openstax_page(query="calculus", category="Math & Statistics", page=1)
+        assert len(page.books) == 1
+        assert page.books[0].title == "Calculus Volume 1"
+        assert page.books[0].pdf_url == "https://assets.openstax.org/calc1.pdf"
+
+
+def test_download_wikisource_html_mock(tmp_path: Path) -> None:
+    from book_reader.backend.gutenberg import CatalogBook, download_catalog_book
+
+    book = CatalogBook(
+        id="ws_1",
+        title="Godan",
+        authors=["Premchand"],
+        languages=["hi"],
+        formats={"text/html": "https://hi.wikisource.org/w/api.php?action=parse&page=Godan&prop=text&format=json"},
+        download_count=0,
+        source="Wikisource (Hindi)",
+    )
+    parse_json = {
+        "parse": {
+            "title": "Godan",
+            "text": {"*": "<p>Chapter one text of Godan in Hindi</p>"},
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(parse_json).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        out_file = download_catalog_book(book, tmp_path)
+        assert out_file.exists()
+        assert out_file.suffix == ".html"
+        content = out_file.read_text(encoding="utf-8")
+        assert "Chapter one text of Godan" in content
 
