@@ -26,6 +26,7 @@ from book_reader.tts.speech import ReadAloudController, ScreenReaderAnnouncer
 from book_reader.ui.dialogs import (
     BookmarksDialog,
     GoToPageDialog,
+    GutenbergCatalogDialog,
     LibraryDialog,
     LinksDialog,
     SearchDialog,
@@ -99,6 +100,7 @@ class BookReaderFrame(wx.Frame):
         file_menu = wx.Menu()
         m_open = file_menu.Append(wx.ID_OPEN, "&Open Book...\tCtrl+O", "Open an e-book file")
         m_lib = file_menu.Append(wx.ID_ANY, "My &Library...\tCtrl+L", "Open your books library")
+        m_gutenberg = file_menu.Append(wx.ID_ANY, "Project &Gutenberg Catalog...\tCtrl+Shift+G", "Search and download free books from Project Gutenberg")
         file_menu.AppendSeparator()
         m_prefs = file_menu.Append(wx.ID_PREFERENCES, "&Settings...\tCtrl+,", "Open Settings")
         file_menu.AppendSeparator()
@@ -159,6 +161,7 @@ class BookReaderFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_settings, m_prefs)
         self.Bind(wx.EVT_MENU, self._on_open_dialog, m_open)
         self.Bind(wx.EVT_MENU, self._on_library_dialog, m_lib)
+        self.Bind(wx.EVT_MENU, self._on_gutenberg_dialog, m_gutenberg)
         self.Bind(wx.EVT_MENU, lambda _e: self.Close(), m_exit)
         self.Bind(wx.EVT_MENU, self._on_toggle_pane_focus, m_focus)
         self.Bind(wx.EVT_MENU, lambda _e: self.go_back(), m_back)
@@ -803,6 +806,12 @@ class BookReaderFrame(wx.Frame):
                 self.store.remove_from_library(dlg.book_to_delete)
             if res == wx.ID_OK and dlg.selected_path:
                 self.open_book_path(dlg.selected_path)
+
+    def _on_gutenberg_dialog(self, _event: wx.Event) -> None:
+        download_dir = Path(self.store.data_dir) / "downloads" / "gutenberg"
+        with GutenbergCatalogDialog(self, download_dir) as dlg:
+            if dlg.ShowModal() == wx.ID_OK and dlg.downloaded_path:
+                self.open_book_path(str(dlg.downloaded_path))
 
     def _on_settings(self, _event: wx.Event) -> None:
         voices = self.tts.list_sapi_voices()

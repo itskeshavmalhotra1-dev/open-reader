@@ -1246,3 +1246,173 @@ class LinksDialog(wx.Dialog):
         self.action = action
         self.selected_index = sel
         self.EndModal(wx.ID_OK)
+
+
+class GutenbergCatalogDialog(wx.Dialog):
+    """Accessible catalog search & download dialog for Project Gutenberg."""
+
+    def __init__(self, parent: wx.Window, download_dir: Path) -> None:
+        super().__init__(parent, title="Project Gutenberg Catalog", size=(680, 520))
+        from book_reader.backend.gutenberg import GutenbergBook, download_gutenberg_book, search_gutenberg
+        import threading
+
+        self.download_dir = download_dir
+        self.books: list[GutenbergBook] = []
+        self.downloaded_path: Path | None = None
+
+        panel = wx.Panel(self)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        # Search row
+        search_box = wx.BoxSizer(wx.HORIZONTAL)
+        search_lbl = wx.StaticText(panel, label="&Search books or authors:")
+        self.query_ctrl = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER)
+        self.query_ctrl.SetName("Search query")
+        self.search_btn = wx.Button(panel, label="&Search")
+        search_box.Add(search_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        search_box.Add(self.query_ctrl, 1, wx.EXPAND | wx.RIGHT, 8)
+        search_box.Add(self.search_btn, 0)
+        vbox.Add(search_box, 0, wx.EXPAND | wx.ALL, 10)
+
+        # Status indicator
+        self.status_lbl = wx.StaticText(panel, label="Enter a book title or author and press Enter.")
+        vbox.Add(self.status_lbl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
+        # Results list
+        results_lbl = wx.StaticText(panel, label="&Available Titles:")
+        vbox.Add(results_lbl, 0, wx.LEFT | wx.RIGHT, 10)
+        self.results_list = wx.ListBox(panel)
+        self.results_list.SetName("Available books")
+        vbox.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 10)
+
+        # Details text
+        self.details_ctrl = wx.TextCtrl(
+            panel,
+            style=wx.TE_MULTILINE | wx.TE_READONLY,
+            size=(-1, 70),
+        )
+        self.details_ctrl.SetName("Book details")
+        vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+
+        # Buttons
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.download_btn = wx.Button(panel, wx.ID_OK, "&Download and Read")
+        self.download_btn.Enable(False)
+        self.download_btn.SetDefault()
+        cancel_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
+        btn_sizer.Add(self.download_btn, 0, wx.RIGHT, 8)
+        btn_sizer.Add(cancel_btn, 0)
+        vbox.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 10)
+
+        panel.SetSizer(vbox)
+
+        self.query_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_search)
+        self.search_btn.Bind(wx.EVT_BUTTON, self._on_search)
+        self.results_list.Bind(wx.EVT_LISTBOX, self._on_select)
+        self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self._on_download)
+        self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
+
+        self.query_ctrl.SetFocus()
+
+    def _on_search(self, _event: wx.Event) -> None:
+        from book_reader.backend.gutenberg import search_gutenberg
+        import threading
+
+        query = self.query_ctrl.GetValue().strip()
+        if not query:
+            return
+
+        self.status_lbl.SetLabel(f"Searching Project Gutenberg for '{query}'...")
+        self.results_list.Clear()
+        self.download_btn.Enable(False)
+        self.search_btn.Enable(False)
+
+        def worker() -> None:
+            try:
+                results = search_gutenberg(query)
+                wx.CallAfter(self._populate_results, results)
+            except Exception as e:
+                wx.CallAfter(self._search_failed, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _populate_results(self, results: list) -> None:
+        self.search_btn.Enable(True)
+        self.books = results
+        self.results_list.Clear()
+        if not results:
+            self.status_lbl.SetLabel("No books found matching query.")
+            return
+
+        for b in results:
+            lang = f"[{','.join(b.languages)}]" if b.languages else ""
+            self.results_list.Append(f"{b.title} — {b.author_display} {lang}")
+
+        self.status_lbl.SetLabel(f"Found {len(results)} books. Select a book and press Enter to read.")
+        self.results_list.SetSelection(0)
+        self.download_btn.Enable(True)
+        self._update_details()
+        self.results_list.SetFocus()
+
+    def _search_failed(self, error: str) -> None:
+        self.search_btn.Enable(True)
+        self.status_lbl.SetLabel(f"Search failed: {error}")
+
+    def _on_select(self, _event: wx.Event) -> None:
+        self._update_details()
+        self.download_btn.Enable(self.results_list.GetSelection() != wx.NOT_FOUND)
+
+    def _update_details(self) -> None:
+        idx = self.results_list.GetSelection()
+        if 0 <= idx < len(self.books):
+            b = self.books[idx]
+            fmt = "EPUB" if b.epub_url else ("TXT" if b.text_url else "Unknown")
+            details = (
+                f"Title: {b.title}\n"
+                f"Author: {b.author_display}\n"
+                f"Format: {fmt} | Downloads: {b.download_count}"
+            )
+            self.details_ctrl.SetValue(details)
+        else:
+            self.details_ctrl.SetValue("")
+
+    def _on_download(self, _event: wx.Event) -> None:
+        from book_reader.backend.gutenberg import download_gutenberg_book
+        import threading
+
+        idx = self.results_list.GetSelection()
+        if not (0 <= idx < len(self.books)):
+            return
+
+        book = self.books[idx]
+        progress = wx.ProgressDialog(
+            "Downloading Book",
+            f"Downloading '{book.title}' from Project Gutenberg...",
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
+        )
+
+        def worker() -> None:
+            try:
+                def on_progress(dl: int, total: int) -> None:
+                    if total > 0:
+                        pct = min(99, int((dl * 100) / total))
+                        wx.CallAfter(progress.Update, pct, f"Downloaded {dl // 1024} KB of {total // 1024} KB...")
+
+                path = download_gutenberg_book(book, self.download_dir, progress_cb=on_progress)
+                wx.CallAfter(self._download_complete, progress, path)
+            except Exception as e:
+                wx.CallAfter(self._download_failed, progress, str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _download_complete(self, progress: wx.ProgressDialog, path: Path) -> None:
+        progress.Update(100, "Done!")
+        progress.Destroy()
+        self.downloaded_path = path
+        self.EndModal(wx.ID_OK)
+
+    def _download_failed(self, progress: wx.ProgressDialog, error: str) -> None:
+        progress.Destroy()
+        wx.MessageBox(f"Failed to download book:\n{error}", "Download Error", wx.OK | wx.ICON_ERROR, self)
