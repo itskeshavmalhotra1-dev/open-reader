@@ -201,7 +201,7 @@ class BookReaderFrame(wx.Frame):
             left_panel,
             style=wx.TR_DEFAULT_STYLE | wx.TR_HIDE_ROOT,
         )
-        self.toc_tree.SetName("Table of contents and headings")
+        self.toc_tree.SetName("Table of contents")
         left_sizer.Add(self.toc_tree, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         left_panel.SetSizer(left_sizer)
 
@@ -214,7 +214,7 @@ class BookReaderFrame(wx.Frame):
             right_panel,
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.TE_NOHIDESEL | wx.TE_AUTO_URL,
         )
-        self.reader_ctrl.SetName("Book reading view")
+        self.reader_ctrl.SetName("Book content")
         self.reader_ctrl.SetValue(
             f"Welcome to {APP_NAME} v{__version__}.\n\n"
             "Press Ctrl+O to open an EPUB, PDF, DOCX, DAISY OPF, HTML, Markdown, or TXT file.\n"
@@ -423,10 +423,8 @@ class BookReaderFrame(wx.Frame):
     def _on_toggle_pane_focus(self, _event: wx.Event) -> None:
         if self.FindFocus() == self.toc_tree:
             self.reader_ctrl.SetFocus()
-            self.announcer.say("Reading view", interrupt=True)
         else:
             self.toc_tree.SetFocus()
-            self.announcer.say("Table of contents", interrupt=True)
 
     def _on_reader_key_down(self, event: wx.KeyEvent) -> None:
         """Combined key handler for the reading view.
@@ -568,7 +566,6 @@ class BookReaderFrame(wx.Frame):
         if link.href.lower().startswith(("http://", "https://", "mailto:")):
             webbrowser.open(link.href)
             self.SetStatusText(f"Opened link: {link.href}")
-            self.announcer.say(f"Opening link {link.text}", interrupt=True)
         else:
             self.announcer.say(f"Unresolved internal link: {link.href}", interrupt=True)
 
@@ -580,7 +577,6 @@ class BookReaderFrame(wx.Frame):
             if url.lower().startswith(("http://", "https://", "mailto:")):
                 webbrowser.open(url)
                 self.SetStatusText(f"Opened link: {url}")
-                self.announcer.say("Opening link in browser", interrupt=True)
         event.Skip()
 
     def step_link(self, delta: int) -> None:
@@ -704,7 +700,7 @@ class BookReaderFrame(wx.Frame):
             start_idx = self._sentence_index_at_cursor()
             self._tts_active_span = self.sentences[start_idx]
             # Silence any queued NVDA speech before starting narration
-            self.announcer.say(" ", interrupt=True)
+            self.announcer.silence()
             self._update_status("Reading aloud...")
             chap_text = self.book.chapters[self.current_chapter_idx].text
             self.tts.start(self.sentences, start_idx, source_text=chap_text)
@@ -782,7 +778,6 @@ class BookReaderFrame(wx.Frame):
                     dlg.GetValue(),
                 )
                 self._update_status(f"Bookmark added: {bm.label}")
-                self.announcer.say(f"Bookmark saved: {bm.label}", interrupt=True)
 
     def _on_list_bookmarks(self, _event: wx.Event) -> None:
         if not self.book:
@@ -827,7 +822,6 @@ class BookReaderFrame(wx.Frame):
                 self.store.data["preferences"] = dlg.get_updated_prefs()
                 self.store.save()
                 self._apply_preferences()
-                self.announcer.say("Settings saved", interrupt=True)
 
     def _on_help_shortcuts(self, _event: wx.Event) -> None:
         wx.MessageBox(SHORTCUTS_TEXT, "Keyboard Shortcuts", wx.OK | wx.ICON_INFORMATION, self)
@@ -843,7 +837,6 @@ class BookReaderFrame(wx.Frame):
 
     def _on_check_updates(self, _event: wx.Event) -> None:
         self.SetStatusText("Checking for updates on GitHub...")
-        self.announcer.say("Checking for updates", interrupt=True)
 
         def _worker() -> None:
             try:

@@ -24,20 +24,20 @@ class SearchDialog(wx.Dialog):
         query_row = wx.BoxSizer(wx.HORIZONTAL)
         lbl = wx.StaticText(panel, label="&Search query:")
         self.query_ctrl = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER)
-        self.query_ctrl.SetName("Search query")
+        self.query_ctrl.SetName("Search")
         self.find_btn = wx.Button(panel, label="&Find")
         query_row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         query_row.Add(self.query_ctrl, 1, wx.EXPAND | wx.RIGHT, 8)
         query_row.Add(self.find_btn, 0)
         vbox.Add(query_row, 0, wx.EXPAND | wx.ALL, 10)
 
-        self.status_lbl = wx.StaticText(panel, label="Type a word or phrase and press Enter.")
+        self.status_lbl = wx.StaticText(panel, label="")
         vbox.Add(self.status_lbl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         results_lbl = wx.StaticText(panel, label="&Results:")
         vbox.Add(results_lbl, 0, wx.LEFT | wx.RIGHT, 10)
         self.results_list = wx.ListBox(panel)
-        self.results_list.SetName("Search results")
+        self.results_list.SetName("Results")
         vbox.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 10)
 
         btn_sizer = wx.StdDialogButtonSizer()
@@ -100,7 +100,7 @@ class BookmarksDialog(wx.Dialog):
         vbox.Add(lbl, 0, wx.ALL, 10)
 
         self.list_box = wx.ListBox(panel)
-        self.list_box.SetName("Bookmarks list")
+        self.list_box.SetName("Bookmarks")
         for bm in bookmarks:
             self.list_box.Append(f"Chapter {bm.chapter_index + 1} - {bm.label}")
         vbox.Add(self.list_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
@@ -144,7 +144,7 @@ class GoToPageDialog(wx.Dialog):
         row = wx.BoxSizer(wx.HORIZONTAL)
         lbl = wx.StaticText(panel, label="&Page number or label:")
         self.page_ctrl = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER)
-        self.page_ctrl.SetName("Page number or label")
+        self.page_ctrl.SetName("Page number")
         row.Add(lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         row.Add(self.page_ctrl, 1, wx.EXPAND)
         vbox.Add(row, 0, wx.EXPAND | wx.ALL, 10)
@@ -152,7 +152,7 @@ class GoToPageDialog(wx.Dialog):
         list_lbl = wx.StaticText(panel, label=f"Available &pages ({len(page_breaks)}):")
         vbox.Add(list_lbl, 0, wx.LEFT | wx.RIGHT, 10)
         self.page_list = wx.ListBox(panel)
-        self.page_list.SetName("Available pages")
+        self.page_list.SetName("Pages")
         for pb in page_breaks[:500]:
             self.page_list.Append(f"Page {pb.label} (Section {pb.chapter_index + 1})")
         vbox.Add(self.page_list, 1, wx.EXPAND | wx.ALL, 10)
@@ -222,7 +222,7 @@ class SettingsDialog(wx.Dialog):
 
         d_grid.Add(wx.StaticText(display_tab, label="&Font size (pt):"), 0, wx.ALIGN_CENTER_VERTICAL)
         self.font_spin = wx.SpinCtrl(display_tab, min=10, max=40, initial=int(prefs.get("font_size", 14)))
-        self.font_spin.SetName("Font size in points")
+        self.font_spin.SetName("Font size")
         d_grid.Add(self.font_spin, 1, wx.EXPAND)
 
         d_grid.Add(wx.StaticText(display_tab, label="&High contrast mode:"), 0, wx.ALIGN_CENTER_VERTICAL)
@@ -252,7 +252,7 @@ class SettingsDialog(wx.Dialog):
         ]
         engine_labels = [opt[1] for opt in self.engine_options]
         self.engine_choice = wx.Choice(audio_tab, choices=engine_labels)
-        self.engine_choice.SetName("Text to speech engine")
+        self.engine_choice.SetName("TTS engine")
         current_engine = str(prefs.get("tts_engine", "edge")).lower()
         sel_eng_idx = 0
         for idx, (code, _) in enumerate(self.engine_options):
@@ -268,17 +268,17 @@ class SettingsDialog(wx.Dialog):
             style=wx.TE_READONLY | wx.TE_MULTILINE,
             size=(-1, 56),
         )
-        self.engine_status_ctrl.SetName("Engine status and offline models info")
+        self.engine_status_ctrl.SetName("Engine status")
         a_grid.Add(self.engine_status_ctrl, 1, wx.EXPAND)
 
         a_grid.Add(wx.StaticText(audio_tab, label="&Filter by Language:"), 0, wx.ALIGN_CENTER_VERTICAL)
         self.lang_choice = wx.Choice(audio_tab)
-        self.lang_choice.SetName("Filter voices by language")
+        self.lang_choice.SetName("Language")
         a_grid.Add(self.lang_choice, 1, wx.EXPAND)
 
         a_grid.Add(wx.StaticText(audio_tab, label="Default TTS &Voice:"), 0, wx.ALIGN_CENTER_VERTICAL)
         self.voice_choice = wx.Choice(audio_tab)
-        self.voice_choice.SetName("Default Text to Speech voice")
+        self.voice_choice.SetName("Voice")
         self._current_engine = current_engine
         self._sapi_voices = voices
         self._edge_voices: list[VoiceInfo] = []
@@ -295,9 +295,7 @@ class SettingsDialog(wx.Dialog):
         a_grid.Add(wx.StaticText(audio_tab, label="Voice &Actions:"), 0, wx.ALIGN_CENTER_VERTICAL)
         action_row = wx.BoxSizer(wx.HORIZONTAL)
         test_btn = wx.Button(audio_tab, label="&Play Sample Voice")
-        test_btn.SetName("Play sample voice test")
         self.manage_piper_btn = wx.Button(audio_tab, label="&Download Voices...")
-        self.manage_piper_btn.SetName("Download or manage offline Piper voices")
         action_row.Add(test_btn, 0, wx.RIGHT, 8)
         action_row.Add(self.manage_piper_btn, 0)
         a_grid.Add(action_row, 0)
@@ -324,7 +322,6 @@ class SettingsDialog(wx.Dialog):
 
         self.auto_save_cb = wx.CheckBox(local_parent, label="&Auto-save opened books to Library without asking")
         self.auto_save_cb.SetValue(bool(prefs.get("auto_save_library", False)))
-        self.auto_save_cb.SetName("Auto-save opened books to library")
         local_box.Add(self.auto_save_cb, 0, wx.ALL, 8)
 
         scan_lbl = wx.StaticText(local_parent, label="Local folder to scan for books:")
@@ -332,21 +329,16 @@ class SettingsDialog(wx.Dialog):
 
         f_row = wx.BoxSizer(wx.HORIZONTAL)
         self.folder_text = wx.TextCtrl(local_parent, value=str(prefs.get("library_folder", "")))
-        self.folder_text.SetName("Local folder path to scan for books")
+        self.folder_text.SetName("Folder path")
         browse_btn = wx.Button(local_parent, label="&Browse Folder...")
-        browse_btn.SetName("Browse local folder to scan books into library")
         scan_btn = wx.Button(local_parent, label="Scan &Now")
-        scan_btn.SetName("Scan local folder now and import books into library")
 
         f_row.Add(self.folder_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         f_row.Add(browse_btn, 0, wx.RIGHT, 6)
         f_row.Add(scan_btn, 0)
         local_box.Add(f_row, 0, wx.EXPAND | wx.ALL, 8)
 
-        self.scan_status_ctrl = wx.StaticText(
-            local_parent,
-            label="Select a folder containing e-books to import them into your library.",
-        )
+        self.scan_status_ctrl = wx.StaticText(local_parent, label="")
         local_box.Add(self.scan_status_ctrl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
         lib_vbox.Add(local_box, 0, wx.EXPAND | wx.ALL, 10)
 
@@ -360,11 +352,9 @@ class SettingsDialog(wx.Dialog):
         dl_row = wx.BoxSizer(wx.HORIZONTAL)
         active_dl = str(prefs.get("online_download_dir", "")).strip() or self._default_download_dir
         self.dl_folder_text = wx.TextCtrl(dl_parent, value=active_dl)
-        self.dl_folder_text.SetName("Online books download destination folder path")
+        self.dl_folder_text.SetName("Download folder")
         self.dl_browse_btn = wx.Button(dl_parent, label="Change &Download Folder...")
-        self.dl_browse_btn.SetName("Change destination folder for downloaded online books")
         self.dl_reset_btn = wx.Button(dl_parent, label="&Reset to Default")
-        self.dl_reset_btn.SetName("Reset download folder to default location")
 
         dl_row.Add(self.dl_folder_text, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         dl_row.Add(self.dl_browse_btn, 0, wx.RIGHT, 6)
@@ -439,12 +429,6 @@ class SettingsDialog(wx.Dialog):
             sample_text = "یہ ایکسی ایبل بک ریڈر کے لیے وائس ٹیسٹ ہے۔"
         else:
             sample_text = "This is a sample voice test for Accessible Book Reader."
-
-        if engine == "piper":
-            from book_reader.tts.speech import ReadAloudController, ScreenReaderAnnouncer
-
-            if not ReadAloudController.is_piper_model_downloaded(voice_id):
-                ScreenReaderAnnouncer().say("Downloading Piper voice model, please wait.", interrupt=True)
 
         self._tts_controller.preview_voice(sample_text, voice_id=voice_id, engine=engine, rate=rate)
 
@@ -600,14 +584,14 @@ class LibraryDialog(wx.Dialog):
         s_row = wx.BoxSizer(wx.HORIZONTAL)
         s_lbl = wx.StaticText(panel, label="&Search Library:")
         self.search_ctrl = wx.TextCtrl(panel)
-        self.search_ctrl.SetName("Search books in library")
+        self.search_ctrl.SetName("Search")
         s_row.Add(s_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         s_row.Add(self.search_ctrl, 1, wx.EXPAND)
         vbox.Add(s_row, 0, wx.EXPAND | wx.ALL, 10)
 
         # Books list
         self.list_box = wx.ListBox(panel)
-        self.list_box.SetName("Library books list")
+        self.list_box.SetName("Books")
         self._populate_list()
         vbox.Add(self.list_box, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
@@ -718,20 +702,20 @@ class PiperVoiceManagerDialog(wx.Dialog):
         f_row.Add(wx.StaticText(panel, label="&Language:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         langs = sorted({item["language"] for item in self._catalog if item.get("language")})
         self.lang_choice = wx.Choice(panel, choices=["All Languages"] + langs)
-        self.lang_choice.SetName("Filter Piper voices by language")
+        self.lang_choice.SetName("Language")
         self.lang_choice.SetSelection(0)
         f_row.Add(self.lang_choice, 1, wx.RIGHT, 10)
 
         f_row.Add(wx.StaticText(panel, label="&Quality:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         quals = ["All Qualities", "x_low", "low", "medium", "high"]
         self.qual_choice = wx.Choice(panel, choices=quals)
-        self.qual_choice.SetName("Filter Piper voices by quality")
+        self.qual_choice.SetName("Quality")
         self.qual_choice.SetSelection(0)
         f_row.Add(self.qual_choice, 1, wx.RIGHT, 10)
 
         f_row.Add(wx.StaticText(panel, label="&Search:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         self.search_ctrl = wx.TextCtrl(panel)
-        self.search_ctrl.SetName("Search Piper voices by name")
+        self.search_ctrl.SetName("Search")
         f_row.Add(self.search_ctrl, 1)
         vbox.Add(f_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
@@ -739,7 +723,7 @@ class PiperVoiceManagerDialog(wx.Dialog):
         list_lbl = wx.StaticText(panel, label="Available &Voices:")
         vbox.Add(list_lbl, 0, wx.LEFT | wx.RIGHT, 10)
         self.voice_list = wx.ListBox(panel)
-        self.voice_list.SetName("Piper voices list")
+        self.voice_list.SetName("Voices")
         vbox.Add(self.voice_list, 1, wx.EXPAND | wx.ALL, 10)
 
         # Selected voice details (focusable by Tab)
@@ -748,15 +732,15 @@ class PiperVoiceManagerDialog(wx.Dialog):
             style=wx.TE_READONLY | wx.TE_MULTILINE,
             size=(-1, 56),
         )
-        self.details_ctrl.SetName("Selected voice details")
+        self.details_ctrl.SetName("Voice details")
         vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         # Progress bar + accessible status
         prog_row = wx.BoxSizer(wx.HORIZONTAL)
         self.gauge = wx.Gauge(panel, range=100, size=(-1, 18))
-        self.gauge.SetName("Download progress")
+        self.gauge.SetName("Progress")
         self.prog_status_ctrl = wx.TextCtrl(panel, value="Ready.", style=wx.TE_READONLY)
-        self.prog_status_ctrl.SetName("Download status")
+        self.prog_status_ctrl.SetName("Status")
         prog_row.Add(self.gauge, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
         prog_row.Add(self.prog_status_ctrl, 1, wx.EXPAND)
         vbox.Add(prog_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
@@ -764,11 +748,8 @@ class PiperVoiceManagerDialog(wx.Dialog):
         # Action buttons
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         self.dl_btn = wx.Button(panel, label="&Download Selected")
-        self.dl_btn.SetName("Download selected Piper voice")
         self.sample_btn = wx.Button(panel, label="&Play Sample")
-        self.sample_btn.SetName("Play sample of downloaded Piper voice")
         self.remove_btn = wx.Button(panel, label="&Remove Local Model")
-        self.remove_btn.SetName("Remove downloaded Piper voice model")
         self.close_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
 
         btn_row.Add(self.dl_btn, 0, wx.RIGHT, 8)
@@ -893,7 +874,7 @@ class PiperVoiceManagerDialog(wx.Dialog):
         self.remove_btn.Enable(False)
         self.gauge.SetValue(0)
         self.prog_status_ctrl.SetValue(f"Downloading {voice_id}...")
-        ScreenReaderAnnouncer().say(f"Downloading {voice_id}, please wait.", interrupt=True)
+        ScreenReaderAnnouncer().say(f"Downloading {voice_id}", interrupt=True)
 
         def on_progress(done_bytes: int, total_bytes: int) -> None:
             def ui_update() -> None:
@@ -932,7 +913,7 @@ class PiperVoiceManagerDialog(wx.Dialog):
                 else:
                     self.gauge.SetValue(100)
                     self.prog_status_ctrl.SetValue(f"Download complete: {voice_id}")
-                    ScreenReaderAnnouncer().say(f"Download complete for {voice_id}.", interrupt=True)
+                    ScreenReaderAnnouncer().say(f"{voice_id} downloaded", interrupt=True)
                     self._catalog = ReadAloudController.get_piper_catalog_details()
                     self._refresh_summary()
                     self._apply_filters(select_voice_id=voice_id)
@@ -985,7 +966,7 @@ class PiperVoiceManagerDialog(wx.Dialog):
         self._refresh_summary()
         self._apply_filters(select_voice_id=voice_id)
         self.prog_status_ctrl.SetValue(f"Removed local model: {voice_id}")
-        ScreenReaderAnnouncer().say(f"Removed {voice_id}.", interrupt=True)
+        ScreenReaderAnnouncer().say(f"{voice_id} removed", interrupt=True)
 
     def _on_dialog_close(self, event: wx.CloseEvent) -> None:
         if self._cancel_event:
@@ -1015,26 +996,26 @@ class KokoroVoiceManagerDialog(wx.Dialog):
             style=wx.TE_READONLY | wx.TE_MULTILINE,
             size=(-1, 48),
         )
-        self.summary_ctrl.SetName("Kokoro offline storage summary")
+        self.summary_ctrl.SetName("Storage summary")
         vbox.Add(self.summary_ctrl, 0, wx.EXPAND | wx.ALL, 10)
 
         f_row = wx.BoxSizer(wx.HORIZONTAL)
         f_row.Add(wx.StaticText(panel, label="&Language:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         langs = sorted({v.language for v in self._voices if v.language})
         self.lang_choice = wx.Choice(panel, choices=["All Languages"] + langs)
-        self.lang_choice.SetName("Filter Kokoro voices by language")
+        self.lang_choice.SetName("Language")
         self.lang_choice.SetSelection(0)
         f_row.Add(self.lang_choice, 1, wx.RIGHT, 10)
 
         f_row.Add(wx.StaticText(panel, label="&Search:"), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         self.search_ctrl = wx.TextCtrl(panel)
-        self.search_ctrl.SetName("Search Kokoro voices by name")
+        self.search_ctrl.SetName("Search")
         f_row.Add(self.search_ctrl, 1)
         vbox.Add(f_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         vbox.Add(wx.StaticText(panel, label="Kokoro &Voices (shared 115 MB model pack):"), 0, wx.LEFT | wx.RIGHT, 10)
         self.voice_list = wx.ListBox(panel)
-        self.voice_list.SetName("Kokoro voices list")
+        self.voice_list.SetName("Voices")
         vbox.Add(self.voice_list, 1, wx.EXPAND | wx.ALL, 10)
 
         self.details_ctrl = wx.TextCtrl(
@@ -1042,25 +1023,22 @@ class KokoroVoiceManagerDialog(wx.Dialog):
             style=wx.TE_READONLY | wx.TE_MULTILINE,
             size=(-1, 54),
         )
-        self.details_ctrl.SetName("Selected Kokoro voice details")
+        self.details_ctrl.SetName("Details")
         vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         prog_row = wx.BoxSizer(wx.HORIZONTAL)
         self.gauge = wx.Gauge(panel, range=100, size=(-1, 18))
-        self.gauge.SetName("Download progress")
+        self.gauge.SetName("Progress")
         self.prog_status_ctrl = wx.TextCtrl(panel, value="Ready.", style=wx.TE_READONLY)
-        self.prog_status_ctrl.SetName("Download status")
+        self.prog_status_ctrl.SetName("Status")
         prog_row.Add(self.gauge, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
         prog_row.Add(self.prog_status_ctrl, 1, wx.EXPAND)
         vbox.Add(prog_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
 
         btn_row = wx.BoxSizer(wx.HORIZONTAL)
         self.dl_btn = wx.Button(panel, label="&Download Model Pack (115 MB)")
-        self.dl_btn.SetName("Download Kokoro model pack")
         self.sample_btn = wx.Button(panel, label="&Play Sample")
-        self.sample_btn.SetName("Play sample of selected Kokoro voice")
         self.remove_btn = wx.Button(panel, label="&Remove Local Model")
-        self.remove_btn.SetName("Remove downloaded Kokoro model pack")
         close_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
 
         btn_row.Add(self.dl_btn, 0, wx.RIGHT, 8)
@@ -1168,7 +1146,7 @@ class KokoroVoiceManagerDialog(wx.Dialog):
         self.remove_btn.Enable(False)
         self.gauge.SetValue(0)
         self.prog_status_ctrl.SetValue("Downloading Kokoro-82M model pack...")
-        ScreenReaderAnnouncer().say("Downloading Kokoro model pack, please wait.", interrupt=True)
+        ScreenReaderAnnouncer().say("Downloading Kokoro model pack", interrupt=True)
 
         def on_progress(fname: str, done_bytes: int, total_bytes: int) -> None:
             def ui_update() -> None:
@@ -1204,7 +1182,7 @@ class KokoroVoiceManagerDialog(wx.Dialog):
                 else:
                     self.gauge.SetValue(100)
                     self.prog_status_ctrl.SetValue("Kokoro-82M model pack download complete.")
-                    ScreenReaderAnnouncer().say("Kokoro model pack downloaded.", interrupt=True)
+                    ScreenReaderAnnouncer().say("Kokoro model pack downloaded", interrupt=True)
                     self._voices = ReadAloudController.list_kokoro_voices()
                     self._refresh_summary()
                     self._apply_filters()
@@ -1241,7 +1219,7 @@ class KokoroVoiceManagerDialog(wx.Dialog):
         self._refresh_summary()
         self._apply_filters()
         self.prog_status_ctrl.SetValue("Removed local Kokoro-82M model pack.")
-        ScreenReaderAnnouncer().say("Removed Kokoro model pack.", interrupt=True)
+        ScreenReaderAnnouncer().say("Kokoro model pack removed", interrupt=True)
 
     def _on_dialog_close(self, event: wx.CloseEvent) -> None:
         if self._cancel_event:
@@ -1261,7 +1239,7 @@ class LinksDialog(wx.Dialog):
         sizer = wx.BoxSizer(wx.VERTICAL)
         lbl = wx.StaticText(
             self,
-            label=f"Links ({len(links)}). Press Enter to open/follow, or choose Jump to Link:",
+            label=f"Links ({len(links)}):",
         )
         sizer.Add(lbl, 0, wx.ALL, 8)
 
@@ -1271,7 +1249,7 @@ class LinksDialog(wx.Dialog):
             items.append(f"{lnk.text} [{kind}] — {lnk.href}")
 
         self.listbox = wx.ListBox(self, choices=items)
-        self.listbox.SetName("Links list")
+        self.listbox.SetName("Links")
         if items:
             self.listbox.SetSelection(0)
         sizer.Add(self.listbox, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
@@ -1360,7 +1338,7 @@ class OnlineLibrariesDialog(wx.Dialog):
         lib_box = wx.BoxSizer(wx.HORIZONTAL)
         lib_lbl = wx.StaticText(panel, label="&Select Library Catalog:")
         self.lib_choice = wx.Choice(panel, choices=self.AVAILABLE_LIBRARIES)
-        self.lib_choice.SetName("Library source")
+        self.lib_choice.SetName("Library")
         self.lib_choice.SetSelection(0)
         lib_box.Add(lib_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         lib_box.Add(self.lib_choice, 1, wx.EXPAND)
@@ -1372,14 +1350,14 @@ class OnlineLibrariesDialog(wx.Dialog):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(-1, 62),
         )
-        self.lib_info_ctrl.SetName("Library information and status")
+        self.lib_info_ctrl.SetName("Library info")
         vbox.Add(self.lib_info_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Category / Topic row
         cat_box = wx.BoxSizer(wx.HORIZONTAL)
         cat_lbl = wx.StaticText(panel, label="&Category / Topic:")
         self.cat_choice = wx.Choice(panel, choices=GUTENBERG_CATEGORIES)
-        self.cat_choice.SetName("Book category or topic")
+        self.cat_choice.SetName("Category")
         self.cat_choice.SetSelection(0)
         cat_box.Add(cat_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         cat_box.Add(self.cat_choice, 1, wx.EXPAND)
@@ -1389,7 +1367,7 @@ class OnlineLibrariesDialog(wx.Dialog):
         search_box = wx.BoxSizer(wx.HORIZONTAL)
         search_lbl = wx.StaticText(panel, label="&Search (Optional):")
         self.query_ctrl = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER)
-        self.query_ctrl.SetName("Search query")
+        self.query_ctrl.SetName("Search")
         self.search_btn = wx.Button(panel, label="&Search")
         search_box.Add(search_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         search_box.Add(self.query_ctrl, 1, wx.EXPAND | wx.RIGHT, 8)
@@ -1399,28 +1377,26 @@ class OnlineLibrariesDialog(wx.Dialog):
         # Status indicator
         self.status_lbl = wx.StaticText(
             panel,
-            label="Select a library and category or enter a search query, then press Search (Alt+S).",
+            label="",
         )
         vbox.Add(self.status_lbl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Results list
-        results_lbl = wx.StaticText(panel, label="&Available Books (Press Enter to Read):")
+        results_lbl = wx.StaticText(panel, label="&Available Books:")
         vbox.Add(results_lbl, 0, wx.LEFT | wx.RIGHT, 8)
         self.results_list = wx.ListBox(panel)
-        self.results_list.SetName("Available books")
+        self.results_list.SetName("Books")
         vbox.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 8)
 
         # Pagination controls row
         page_box = wx.BoxSizer(wx.HORIZONTAL)
         self.prev_page_btn = wx.Button(panel, label="&Previous Page")
-        self.prev_page_btn.SetName("Previous page of books")
         self.prev_page_btn.Enable(False)
 
         self.page_indicator = wx.StaticText(panel, label="Page 1")
-        self.page_indicator.SetName("Current page indicator")
+        self.page_indicator.SetName("Page")
 
         self.next_page_btn = wx.Button(panel, label="&Next Page")
-        self.next_page_btn.SetName("Next page of books")
         self.next_page_btn.Enable(False)
 
         page_box.Add(self.prev_page_btn, 0, wx.RIGHT, 8)
@@ -1434,7 +1410,7 @@ class OnlineLibrariesDialog(wx.Dialog):
             style=wx.TE_MULTILINE | wx.TE_READONLY,
             size=(-1, 75),
         )
-        self.details_ctrl.SetName("Book details")
+        self.details_ctrl.SetName("Details")
         vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Buttons
@@ -1491,13 +1467,11 @@ class OnlineLibrariesDialog(wx.Dialog):
         else:
             self.cat_choice.Enable(False)
         self._update_library_info()
-        info = self.LIBRARY_INFO.get(lib_name, {})
-        status_text = info.get("status", "Online")
-        self.status_lbl.SetLabel(f"Selected {lib_name} ({status_text}). Press Search (Alt+S) to load books.")
+        self.status_lbl.SetLabel(f"Selected {lib_name}")
 
     def _on_category_changed(self, _event: wx.Event) -> None:
         cat_name = self.cat_choice.GetStringSelection()
-        self.status_lbl.SetLabel(f"Selected category '{cat_name}'. Press Search (Alt+S) to load books.")
+        self.status_lbl.SetLabel(f"Selected {cat_name}")
 
     def _on_search(self, _event: wx.Event) -> None:
         self._trigger_load(reset_page=True)
@@ -1586,8 +1560,7 @@ class OnlineLibrariesDialog(wx.Dialog):
             self.results_list.Append(f"{b.title} — {b.author_display} {lang}")
 
         self.status_lbl.SetLabel(
-            f"Page {page_data.current_page} loaded ({len(page_data.books)} books). "
-            f"Alt+P: Prev Page, Alt+N: Next Page, Enter to read."
+            f"Loaded {len(page_data.books)} books."
         )
         self.results_list.SetSelection(0)
         self.download_btn.Enable(True)
