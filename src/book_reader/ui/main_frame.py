@@ -33,24 +33,22 @@ from book_reader.ui.dialogs import (
     SettingsDialog,
 )
 
-SHORTCUTS_TEXT = """Navigation & Reader Shortcuts:
-- Ctrl+O: Open book (EPUB, PDF, DOCX, DAISY OPF, HTML, MD, TXT)
-- Ctrl+L: Open My Library (Bookshelf)
+SHORTCUTS_TEXT = """Important Keyboard Shortcuts:
+- Ctrl+O: Open Book
+- Ctrl+L: My Library
+- Ctrl+Shift+O: Online Libraries
+- Ctrl+F: Find in Section
+- Ctrl+G: Go to Page
+- Ctrl+K: Links in Section
+- Ctrl+D: Add Bookmark
+- Ctrl+B: Bookmarks List
+- Ctrl+I: Where Am I? (Current location)
+- Ctrl+PgDn: Next Section
+- Ctrl+PgUp: Previous Section
 - F6: Switch focus between Table of Contents and Reading View
-- Ctrl+PageDown / Ctrl+PageUp: Next / Previous section
-- Ctrl+Down / Ctrl+Up: Next / Previous heading (cross-chapter)
-- Ctrl+1 to Ctrl+6: Next heading of level 1 to 6
-- Ctrl+Alt+Down / Ctrl+Alt+Up: Next / Previous paragraph
-- Ctrl+G: Go to Page (EPUB page-list, DAISY, PDF)
-- Alt+Backspace / Alt+Shift+Backspace: Navigate Back / Forward
-- Ctrl+I: Where Am I? (announce book, section, heading, page, progress)
-- Ctrl+Shift+N: Toggle Single-Key Navigation Mode (H, 1-6, P, G, I, Backspace)
-- Ctrl+F: Find in current section
-- Ctrl+D / Ctrl+B: Add Bookmark / Open Bookmarks
-- F5: Start or Stop Read Aloud
-- Alt+Right / Alt+Left: Next / Previous sentence
-- Ctrl+,: Open Settings (Display, Audio, Library Scanner)
-- F1: Show this Keyboard Shortcuts help"""
+- F5: Play or Stop Read Aloud
+- Ctrl+,: Settings
+- F1: Keyboard Shortcuts Help"""
 
 
 class BookReaderFrame(wx.Frame):
@@ -109,40 +107,32 @@ class BookReaderFrame(wx.Frame):
 
         nav_menu = wx.Menu()
         m_focus = nav_menu.Append(wx.ID_ANY, "Switch &Pane (TOC / Reader)\tF6")
-        m_back = nav_menu.Append(wx.ID_ANY, "Go &Back\tAlt+Back")
-        m_fwd = nav_menu.Append(wx.ID_ANY, "Go &Forward\tAlt+Shift+Back")
-        nav_menu.AppendSeparator()
         m_next_ch = nav_menu.Append(wx.ID_ANY, "&Next Section\tCtrl+PgDn")
         m_prev_ch = nav_menu.Append(wx.ID_ANY, "&Previous Section\tCtrl+PgUp")
         nav_menu.AppendSeparator()
-        m_next_hd = nav_menu.Append(wx.ID_ANY, "Next &Heading\tCtrl+Down")
-        m_prev_hd = nav_menu.Append(wx.ID_ANY, "Previous Heading\tCtrl+Up")
-        for lvl in range(1, 7):
-            m_lvl = nav_menu.Append(wx.ID_ANY, f"Next Heading Level &{lvl}\tCtrl+{lvl}")
-            self.Bind(wx.EVT_MENU, lambda _e, level=lvl: self.step_heading(1, level=level), m_lvl)
-        nav_menu.AppendSeparator()
-        m_next_para = nav_menu.Append(wx.ID_ANY, "Next Para&graph\tCtrl+Alt+Down")
-        m_prev_para = nav_menu.Append(wx.ID_ANY, "Previous Paragraph\tCtrl+Alt+Up")
-        nav_menu.AppendSeparator()
-        m_next_link = nav_menu.Append(wx.ID_ANY, "Next Lin&k\tCtrl+K")
-        m_prev_link = nav_menu.Append(wx.ID_ANY, "Previous Link\tCtrl+Shift+K")
-        m_list_links = nav_menu.Append(wx.ID_ANY, "Lin&ks List...\tAlt+K")
-        nav_menu.AppendSeparator()
+        m_find = nav_menu.Append(wx.ID_FIND, "&Find in Section...\tCtrl+F")
         m_goto_page = nav_menu.Append(wx.ID_ANY, "&Go to Page...\tCtrl+G")
+        m_list_links = nav_menu.Append(wx.ID_ANY, "Lin&ks in Section...\tCtrl+K")
         m_where = nav_menu.Append(wx.ID_ANY, "&Where Am I?\tCtrl+I")
+        nav_menu.AppendSeparator()
+        m_next_hd = nav_menu.Append(wx.ID_ANY, "Next &Heading")
+        m_prev_hd = nav_menu.Append(wx.ID_ANY, "Previous Heading")
+        m_next_para = nav_menu.Append(wx.ID_ANY, "Next Para&graph")
+        m_prev_para = nav_menu.Append(wx.ID_ANY, "Previous Paragraph")
+        nav_menu.AppendSeparator()
+        m_back = nav_menu.Append(wx.ID_ANY, "Go &Back")
+        m_fwd = nav_menu.Append(wx.ID_ANY, "Go &Forward")
         self.m_single_key = nav_menu.AppendCheckItem(
             wx.ID_ANY,
-            "Single-&Key Navigation Mode\tCtrl+Shift+N",
+            "Single-&Key Navigation Mode",
             "Use H, 1-6, P, G, I, Backspace directly in Reading View",
         )
-        nav_menu.AppendSeparator()
-        m_find = nav_menu.Append(wx.ID_FIND, "&Find in Section...\tCtrl+F")
         menubar.Append(nav_menu, "&Navigate")
 
         audio_menu = wx.Menu()
         m_play = audio_menu.Append(wx.ID_ANY, "&Play / Stop Read Aloud\tF5")
-        m_next_sent = audio_menu.Append(wx.ID_ANY, "Next &Sentence\tAlt+Right")
-        m_prev_sent = audio_menu.Append(wx.ID_ANY, "Previous Sentence\tAlt+Left")
+        m_next_sent = audio_menu.Append(wx.ID_ANY, "Next &Sentence")
+        m_prev_sent = audio_menu.Append(wx.ID_ANY, "Previous Sentence")
         menubar.Append(audio_menu, "&Audio")
 
         bm_menu = wx.Menu()
@@ -172,8 +162,6 @@ class BookReaderFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda _e: self.step_heading(-1), m_prev_hd)
         self.Bind(wx.EVT_MENU, lambda _e: self.step_paragraph(1), m_next_para)
         self.Bind(wx.EVT_MENU, lambda _e: self.step_paragraph(-1), m_prev_para)
-        self.Bind(wx.EVT_MENU, lambda _e: self.step_link(1), m_next_link)
-        self.Bind(wx.EVT_MENU, lambda _e: self.step_link(-1), m_prev_link)
         self.Bind(wx.EVT_MENU, self._on_links_list, m_list_links)
         self.Bind(wx.EVT_MENU, self._on_go_to_page, m_goto_page)
         self.Bind(wx.EVT_MENU, self._on_where_am_i, m_where)
