@@ -1,4 +1,4 @@
-"""Project Gutenberg API client and book downloader using Gutendex."""
+"""Online libraries catalog clients and book downloaders (Project Gutenberg, Standard Ebooks, Open Library)."""
 
 from __future__ import annotations
 
@@ -9,18 +9,20 @@ from pathlib import Path
 import re
 import urllib.parse
 from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
 
 
 @dataclass(frozen=True)
-class GutenbergBook:
-    """Representation of a book in Project Gutenberg."""
+class CatalogBook:
+    """Unified representation of a book from an online public library."""
 
-    id: int
+    id: str | int
     title: str
     authors: list[str]
     languages: list[str]
     formats: dict[str, str]
-    download_count: int
+    download_count: int = 0
+    source: str = "Project Gutenberg"
 
     @property
     def author_display(self) -> str:
@@ -28,9 +30,10 @@ class GutenbergBook:
 
     @property
     def epub_url(self) -> str | None:
-        """Get best EPUB download URL (prefers epub.images, then epub.noimages)."""
+        """Get best EPUB download URL."""
         for mime in (
             "application/epub+zip",
+            "epub",
             "application/x-mobipocket-ebook",
         ):
             if mime in self.formats:
@@ -44,12 +47,16 @@ class GutenbergBook:
     def text_url(self) -> str | None:
         """Get plain text fallback URL."""
         for k, v in self.formats.items():
-            if "text/plain" in k.lower():
+            if "text/plain" in k.lower() or "txt" in k.lower():
                 return v
         return None
 
 
-def search_gutenberg(query: str, timeout: float = 12.0) -> list[GutenbergBook]:
+# Backward compatibility alias
+GutenbergBook = CatalogBook
+
+
+def search_gutenberg(query: str, timeout: float = 12.0) -> list[CatalogBook]:
     """Search Project Gutenberg books via Gutendex open API."""
     encoded = urllib.parse.quote_plus(query.strip())
     url = f"https://gutendex.com/books/?search={encoded}"
@@ -60,37 +67,135 @@ def search_gutenberg(query: str, timeout: float = 12.0) -> list[GutenbergBook]:
     with urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode("utf-8"))
 
-    results: list[GutenbergBook] = []
+    results: list[CatalogBook] = []
     for item in data.get("results", []):
         authors = [a.get("name", "") for a in item.get("authors", []) if a.get("name")]
         languages = item.get("languages", [])
         formats = item.get("formats", {})
-        book = GutenbergBook(
+        book = CatalogBook(
             id=item.get("id", 0),
             title=item.get("title", "Untitled"),
             authors=authors,
             languages=languages,
             formats=formats,
             download_count=item.get("download_count", 0),
+            source="Project Gutenberg",
         )
         results.append(book)
     return results
 
 
-def download_gutenberg_book(
-    book: GutenbergBook,
+def search_standard_ebooks(query: str, timeout: float = 12.0) -> list[CatalogBook]:
+    """Search Standard Ebooks catalog via OPDS feed."""
+    encoded = urllib.parse.quote_plus(query.strip())
+    url = f"https://standardebooks.org/opds/all?query={encoded}"
+    req = Request(
+        url,
+        headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        xml_data = resp.read()
+
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
+    root = ET.fromstring(xml_data)
+    results: list[CatalogBook] = []
+
+    for entry in root.findall("atom:entry", ns):
+        title_elem = entry.find("atom:title", ns)
+        title = title_elem.text.strip() if title_elem is not None and title_elem.text else "Untitled"
+        authors = [
+            a.find("atom:name", ns).text.strip()
+            for a in entry.findall("atom:author", ns)
+            if a.find("atom:name", ns) is not None and a.find("atom:name", ns).text
+        ]
+        formats = {}
+        for link in entry.findall("atom:link", ns):
+            link_type = link.attrib.get("type", "")
+            href = link.attrib.get("href", "")
+            if href.startswith("/"):
+                href = f"https://standardebooks.org{href}"
+            if "epub" in link_type.lower():
+                formats["application/epub+zip"] = href
+
+        if formats:
+            results.append(
+                CatalogBook(
+                    id=title,
+                    title=title,
+                    authors=authors,
+                    languages=["en"],
+                    formats=formats,
+                    download_count=0,
+                    source="Standard Ebooks",
+                )
+            )
+    return results
+
+
+def search_open_library(query: str, timeout: float = 12.0) -> list[CatalogBook]:
+    """Search Open Library for public domain / readable editions."""
+    encoded = urllib.parse.quote_plus(query.strip())
+    url = f"https://openlibrary.org/search.json?q={encoded}&has_fulltext=true&limit=15"
+    req = Request(
+        url,
+        headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    results: list[CatalogBook] = []
+    for doc in data.get("docs", []):
+        title = doc.get("title", "Untitled")
+        authors = doc.get("author_name", [])
+        languages = doc.get("language", ["en"])
+        ia_ids = doc.get("ia", [])
+        formats = {}
+        if ia_ids:
+            primary_ia = ia_ids[0]
+            # Direct Internet Archive public EPUB / Text endpoints
+            formats["application/epub+zip"] = f"https://archive.org/download/{primary_ia}/{primary_ia}.epub"
+            formats["text/plain"] = f"https://archive.org/download/{primary_ia}/{primary_ia}_djvu.txt"
+
+        if formats:
+            results.append(
+                CatalogBook(
+                    id=doc.get("key", title),
+                    title=title,
+                    authors=authors,
+                    languages=languages,
+                    formats=formats,
+                    download_count=doc.get("readinglog_count", 0),
+                    source="Open Library / Internet Archive",
+                )
+            )
+    return results
+
+
+def search_online_library(source_name: str, query: str) -> list[CatalogBook]:
+    """Dispatch search to the selected catalog source."""
+    if source_name == "Standard Ebooks":
+        return search_standard_ebooks(query)
+    elif "Open Library" in source_name:
+        return search_open_library(query)
+    else:
+        return search_gutenberg(query)
+
+
+def download_catalog_book(
+    book: CatalogBook,
     dest_dir: Path,
     progress_cb=None,
     timeout: float = 30.0,
 ) -> Path:
-    """Download the chosen Gutenberg book (prefers EPUB, falls back to TXT)."""
+    """Download the chosen catalog book (prefers EPUB, falls back to TXT)."""
     download_url = book.epub_url or book.text_url
     if not download_url:
         raise ValueError(f"No suitable download format found for '{book.title}'")
 
     ext = ".epub" if book.epub_url else ".txt"
     safe_title = re.sub(r'[\\/*?:"<>|]', "_", book.title)[:60].strip()
-    filename = f"{safe_title}_{book.id}{ext}"
+    clean_id = re.sub(r'[\\/*?:"<>|]', "_", str(book.id))[:30].strip()
+    filename = f"{safe_title}_{clean_id}{ext}"
     dest_dir.mkdir(parents=True, exist_ok=True)
     target_path = dest_dir / filename
     temp_path = dest_dir / f"{filename}.part"
@@ -115,3 +220,7 @@ def download_gutenberg_book(
     if temp_path.exists():
         temp_path.replace(target_path)
     return target_path
+
+
+# Backward compatibility alias
+download_gutenberg_book = download_catalog_book
