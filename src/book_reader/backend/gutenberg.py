@@ -56,10 +56,37 @@ class CatalogBook:
 GutenbergBook = CatalogBook
 
 
-def search_gutenberg(query: str, timeout: float = 12.0) -> list[CatalogBook]:
-    """Search Project Gutenberg books via Gutendex open API."""
-    encoded = urllib.parse.quote_plus(query.strip())
-    url = f"https://gutendex.com/books/?search={encoded}"
+GUTENBERG_CATEGORIES = [
+    "Popular Classics (All)",
+    "Fiction",
+    "Science Fiction",
+    "Mystery & Detective",
+    "Philosophy & Psychology",
+    "History",
+    "Adventure",
+    "Poetry",
+    "Short Stories",
+    "Children's Literature",
+]
+
+STANDARD_EBOOKS_FEEDS = [
+    ("Popular Titles", "https://standardebooks.org/opds/all"),
+    ("New Releases", "https://standardebooks.org/opds/new-releases"),
+]
+
+
+def search_gutenberg(query: str = "", topic: str = "", timeout: float = 12.0) -> list[CatalogBook]:
+    """Search Project Gutenberg books via Gutendex open API.
+    If query is empty, returns popular books or books in the given topic/category.
+    """
+    params = []
+    if query.strip():
+        params.append(f"search={urllib.parse.quote_plus(query.strip())}")
+    if topic.strip() and topic != "Popular Classics (All)":
+        params.append(f"topic={urllib.parse.quote_plus(topic.strip())}")
+    
+    query_str = ("?" + "&".join(params)) if params else ""
+    url = f"https://gutendex.com/books/{query_str}"
     req = Request(
         url,
         headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
@@ -85,10 +112,14 @@ def search_gutenberg(query: str, timeout: float = 12.0) -> list[CatalogBook]:
     return results
 
 
-def search_standard_ebooks(query: str, timeout: float = 12.0) -> list[CatalogBook]:
+def search_standard_ebooks(query: str = "", feed_url: str | None = None, timeout: float = 12.0) -> list[CatalogBook]:
     """Search Standard Ebooks catalog via OPDS feed."""
-    encoded = urllib.parse.quote_plus(query.strip())
-    url = f"https://standardebooks.org/opds/all?query={encoded}"
+    if query.strip():
+        encoded = urllib.parse.quote_plus(query.strip())
+        url = f"https://standardebooks.org/opds/all?query={encoded}"
+    else:
+        url = feed_url or "https://standardebooks.org/opds/all"
+
     req = Request(
         url,
         headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
@@ -132,10 +163,11 @@ def search_standard_ebooks(query: str, timeout: float = 12.0) -> list[CatalogBoo
     return results
 
 
-def search_open_library(query: str, timeout: float = 12.0) -> list[CatalogBook]:
+def search_open_library(query: str = "", subject: str = "", timeout: float = 12.0) -> list[CatalogBook]:
     """Search Open Library for public domain / readable editions."""
-    encoded = urllib.parse.quote_plus(query.strip())
-    url = f"https://openlibrary.org/search.json?q={encoded}&has_fulltext=true&limit=15"
+    q_str = query.strip() or subject.strip() or "classics"
+    encoded = urllib.parse.quote_plus(q_str)
+    url = f"https://openlibrary.org/search.json?q={encoded}&has_fulltext=true&limit=20"
     req = Request(
         url,
         headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
@@ -152,7 +184,6 @@ def search_open_library(query: str, timeout: float = 12.0) -> list[CatalogBook]:
         formats = {}
         if ia_ids:
             primary_ia = ia_ids[0]
-            # Direct Internet Archive public EPUB / Text endpoints
             formats["application/epub+zip"] = f"https://archive.org/download/{primary_ia}/{primary_ia}.epub"
             formats["text/plain"] = f"https://archive.org/download/{primary_ia}/{primary_ia}_djvu.txt"
 
@@ -171,14 +202,14 @@ def search_open_library(query: str, timeout: float = 12.0) -> list[CatalogBook]:
     return results
 
 
-def search_online_library(source_name: str, query: str) -> list[CatalogBook]:
-    """Dispatch search to the selected catalog source."""
+def search_online_library(source_name: str, query: str = "", category: str = "") -> list[CatalogBook]:
+    """Dispatch search to the selected catalog source with category/topic support."""
     if source_name == "Standard Ebooks":
-        return search_standard_ebooks(query)
+        return search_standard_ebooks(query=query)
     elif "Open Library" in source_name:
-        return search_open_library(query)
+        return search_open_library(query=query, subject=category)
     else:
-        return search_gutenberg(query)
+        return search_gutenberg(query=query, topic=category)
 
 
 def download_catalog_book(

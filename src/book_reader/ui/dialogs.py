@@ -1258,8 +1258,13 @@ class OnlineLibrariesDialog(wx.Dialog):
     ]
 
     def __init__(self, parent: wx.Window, download_dir: Path) -> None:
-        super().__init__(parent, title="Online Book Catalogs", size=(700, 560))
-        from book_reader.backend.gutenberg import CatalogBook, download_catalog_book, search_online_library
+        super().__init__(parent, title="Online Book Catalogs", size=(720, 620))
+        from book_reader.backend.gutenberg import (
+            GUTENBERG_CATEGORIES,
+            CatalogBook,
+            download_catalog_book,
+            search_online_library,
+        )
         import threading
 
         self.download_dir = download_dir
@@ -1277,29 +1282,39 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.lib_choice.SetSelection(0)
         lib_box.Add(lib_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         lib_box.Add(self.lib_choice, 1, wx.EXPAND)
-        vbox.Add(lib_box, 0, wx.EXPAND | wx.ALL, 10)
+        vbox.Add(lib_box, 0, wx.EXPAND | wx.ALL, 8)
+
+        # Category / Topic row
+        cat_box = wx.BoxSizer(wx.HORIZONTAL)
+        cat_lbl = wx.StaticText(panel, label="&Category / Topic:")
+        self.cat_choice = wx.Choice(panel, choices=GUTENBERG_CATEGORIES)
+        self.cat_choice.SetName("Book category or topic")
+        self.cat_choice.SetSelection(0)
+        cat_box.Add(cat_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        cat_box.Add(self.cat_choice, 1, wx.EXPAND)
+        vbox.Add(cat_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Search row
         search_box = wx.BoxSizer(wx.HORIZONTAL)
-        search_lbl = wx.StaticText(panel, label="&Search books or authors:")
+        search_lbl = wx.StaticText(panel, label="&Search (Optional):")
         self.query_ctrl = wx.TextCtrl(panel, style=wx.TE_PROCESS_ENTER)
         self.query_ctrl.SetName("Search query")
         self.search_btn = wx.Button(panel, label="&Search")
         search_box.Add(search_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         search_box.Add(self.query_ctrl, 1, wx.EXPAND | wx.RIGHT, 8)
         search_box.Add(self.search_btn, 0)
-        vbox.Add(search_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        vbox.Add(search_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Status indicator
-        self.status_lbl = wx.StaticText(panel, label="Select a library, type a book title or author, and press Enter.")
-        vbox.Add(self.status_lbl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        self.status_lbl = wx.StaticText(panel, label="Loading popular titles...")
+        vbox.Add(self.status_lbl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Results list
-        results_lbl = wx.StaticText(panel, label="&Available Titles:")
-        vbox.Add(results_lbl, 0, wx.LEFT | wx.RIGHT, 10)
+        results_lbl = wx.StaticText(panel, label="&Available Books (Press Enter to Read):")
+        vbox.Add(results_lbl, 0, wx.LEFT | wx.RIGHT, 8)
         self.results_list = wx.ListBox(panel)
         self.results_list.SetName("Available books")
-        vbox.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 10)
+        vbox.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 8)
 
         # Details text
         self.details_ctrl = wx.TextCtrl(
@@ -1308,7 +1323,7 @@ class OnlineLibrariesDialog(wx.Dialog):
             size=(-1, 75),
         )
         self.details_ctrl.SetName("Book details")
-        vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
+        vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -1318,35 +1333,59 @@ class OnlineLibrariesDialog(wx.Dialog):
         cancel_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
         btn_sizer.Add(self.download_btn, 0, wx.RIGHT, 8)
         btn_sizer.Add(cancel_btn, 0)
-        vbox.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 10)
+        vbox.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 8)
 
         panel.SetSizer(vbox)
 
+        self.lib_choice.Bind(wx.EVT_CHOICE, self._on_lib_changed)
+        self.cat_choice.Bind(wx.EVT_CHOICE, self._on_category_changed)
         self.query_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_search)
         self.search_btn.Bind(wx.EVT_BUTTON, self._on_search)
         self.results_list.Bind(wx.EVT_LISTBOX, self._on_select)
         self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self._on_download)
         self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
 
-        self.query_ctrl.SetFocus()
+        # Auto-load initial popular titles from selected library on open
+        wx.CallAfter(self._trigger_load)
+
+    def _on_lib_changed(self, _event: wx.Event) -> None:
+        lib_name = self.lib_choice.GetStringSelection()
+        if "Gutenberg" in lib_name:
+            self.cat_choice.Enable(True)
+        else:
+            self.cat_choice.Enable(False)
+        self._trigger_load()
+
+    def _on_category_changed(self, _event: wx.Event) -> None:
+        self._trigger_load()
 
     def _on_search(self, _event: wx.Event) -> None:
+        self._trigger_load()
+
+    def _trigger_load(self) -> None:
         from book_reader.backend.gutenberg import search_online_library
         import threading
 
-        query = self.query_ctrl.GetValue().strip()
-        if not query:
-            return
-
         lib_name = self.lib_choice.GetStringSelection()
-        self.status_lbl.SetLabel(f"Searching {lib_name} for '{query}'...")
+        cat_name = self.cat_choice.GetStringSelection() if self.cat_choice.IsEnabled() else ""
+        query = self.query_ctrl.GetValue().strip()
+
+        msg = f"Loading from {lib_name}"
+        if query:
+            msg += f" for '{query}'"
+        elif cat_name and cat_name != "Popular Classics (All)":
+            msg += f" in '{cat_name}'"
+        else:
+            msg += " (Popular titles)"
+        self.status_lbl.SetLabel(f"{msg}...")
+
         self.results_list.Clear()
         self.download_btn.Enable(False)
         self.search_btn.Enable(False)
 
         def worker() -> None:
             try:
-                results = search_online_library(lib_name, query)
+                results = search_online_library(lib_name, query=query, category=cat_name)
                 wx.CallAfter(self._populate_results, results)
             except Exception as e:
                 wx.CallAfter(self._search_failed, str(e))
@@ -1365,7 +1404,7 @@ class OnlineLibrariesDialog(wx.Dialog):
             lang = f"[{','.join(b.languages)}]" if b.languages else ""
             self.results_list.Append(f"{b.title} — {b.author_display} {lang}")
 
-        self.status_lbl.SetLabel(f"Found {len(results)} books. Select a title and press Enter to download and read.")
+        self.status_lbl.SetLabel(f"Loaded {len(results)} books. Press Tab to Results list and press Enter to read.")
         self.results_list.SetSelection(0)
         self.download_btn.Enable(True)
         self._update_details()
