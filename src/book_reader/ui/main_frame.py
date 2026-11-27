@@ -215,11 +215,6 @@ class BookReaderFrame(wx.Frame):
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.TE_NOHIDESEL | wx.TE_AUTO_URL,
         )
         self.reader_ctrl.SetName("Book content")
-        self.reader_ctrl.SetValue(
-            f"Welcome to {APP_NAME} v{__version__}.\n\n"
-            "Press Ctrl+O to open an EPUB, PDF, DOCX, DAISY OPF, HTML, Markdown, or TXT file.\n"
-            "Press F1 at any time for navigation shortcuts."
-        )
         right_sizer.Add(self.reader_ctrl, 1, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 6)
         right_panel.SetSizer(right_sizer)
 
