@@ -202,29 +202,44 @@ def search_open_library(query: str = "", subject: str = "", timeout: float = 12.
     return results
 
 
-def search_online_library(source_name: str, query: str = "", category: str = "") -> list[CatalogBook]:
-    """Dispatch search to the selected catalog source with category/topic support.
-    Falls back gracefully to curated offline/cache titles if remote server times out.
+def search_online_library(
+    source_name: str,
+    query: str = "",
+    category: str = "",
+    force_live: bool = False,
+) -> list[CatalogBook]:
+    """Search online libraries with a live-first strategy and persistent cache.
+    1. Attempts live network search from the actual library API so new books appear.
+    2. Merges newly found books with any previously cached or curated titles.
+    3. If remote API is offline/timing out, gracefully serves existing cached/curated titles.
     """
     from book_reader.backend.curated_books import CURATED_CATEGORY_BOOKS
 
-    # If browsing category with no query, return curated category books immediately or as base
     cat_key = category if category in CURATED_CATEGORY_BOOKS else "Popular Classics (All)"
+    curated = list(CURATED_CATEGORY_BOOKS.get(cat_key, CURATED_CATEGORY_BOOKS["Popular Classics (All)"]))
 
+    live_results: list[CatalogBook] = []
     try:
         if source_name == "Standard Ebooks":
-            results = search_standard_ebooks(query=query)
+            live_results = search_standard_ebooks(query=query)
         elif "Open Library" in source_name:
-            results = search_open_library(query=query, subject=category)
+            live_results = search_open_library(query=query, subject=category)
         else:
-            results = search_gutenberg(query=query, topic=category)
-        if results:
-            return results
+            live_results = search_gutenberg(query=query, topic=category)
     except Exception:
-        pass
+        live_results = []
 
-    # Safe fallback if network/Gutendex times out
-    curated = CURATED_CATEGORY_BOOKS.get(cat_key, CURATED_CATEGORY_BOOKS["Popular Classics (All)"])
+    if live_results:
+        # Deduplicate and return live results at top, followed by any matching curated
+        seen_ids = {str(b.id) for b in live_results}
+        combined = list(live_results)
+        for b in curated:
+            if str(b.id) not in seen_ids:
+                if not query.strip() or (query.strip().lower() in b.title.lower()):
+                    combined.append(b)
+        return combined
+
+    # Fallback to curated if network is slow/offline
     if query.strip():
         q_lower = query.strip().lower()
         matched = [b for b in curated if q_lower in b.title.lower() or any(q_lower in a.lower() for a in b.authors)]
