@@ -149,3 +149,40 @@ def test_download_catalog_book_mock(tmp_path: Path) -> None:
         assert out_file.exists()
         assert out_file.suffix == ".epub"
         assert out_file.read_bytes() == b"epub-data-content"
+
+
+def test_online_libraries_dialog_status_and_info(tmp_path: Path) -> None:
+    import wx
+    from book_reader.ui.dialogs import OnlineLibrariesDialog
+
+    app = wx.App.Get() or wx.App(False)
+    dlg = OnlineLibrariesDialog(None, tmp_path)
+    try:
+        # Initial library Gutenberg info
+        info_val = dlg.lib_info_ctrl.GetValue()
+        assert "Project Gutenberg" in info_val
+        assert "75,000+" in info_val
+        assert dlg.cat_choice.IsEnabled()
+
+        # Switch to Standard Ebooks
+        idx_se = dlg.lib_choice.FindString("Standard Ebooks")
+        if idx_se != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_se)
+            dlg._on_lib_changed(None)
+            info_se = dlg.lib_info_ctrl.GetValue()
+            assert "Standard Ebooks" in info_se
+            assert "Clean EPUB" in info_se
+            assert not dlg.cat_choice.IsEnabled()
+
+        # Switch to Open Library
+        idx_ol = dlg.lib_choice.FindString("Open Library / Internet Archive")
+        if idx_ol != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_ol)
+            dlg._on_lib_changed(None)
+            info_ol = dlg.lib_info_ctrl.GetValue()
+            assert "Open Library" in info_ol
+            assert "Internet Archive" in info_ol
+    finally:
+        dlg.Destroy()
+        app.ProcessPendingEvents()
+

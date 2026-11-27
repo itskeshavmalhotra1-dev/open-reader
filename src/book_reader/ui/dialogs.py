@@ -1257,8 +1257,29 @@ class OnlineLibrariesDialog(wx.Dialog):
         "Open Library / Internet Archive",
     ]
 
+    LIBRARY_INFO = {
+        "Project Gutenberg": {
+            "status": "Online • 75,000+ Free Public Domain Books",
+            "formats": "EPUB, Plain Text",
+            "description": "Oldest digital library with classic literature. Supports browsing by 10+ genres (Fiction, History, Sci-Fi, Philosophy, etc.) and keyword search.",
+            "access": "100% Free, no account or registration required, open public domain.",
+        },
+        "Standard Ebooks": {
+            "status": "Online • Free High-Quality Modern Editions",
+            "formats": "Clean EPUB",
+            "description": "Volunteer-driven project formatting public domain books into beautiful, modern, typographically professional and proofread free ebooks.",
+            "access": "Free open-source releases, no DRM, optimized for e-readers and screen readers.",
+        },
+        "Open Library / Internet Archive": {
+            "status": "Online • Millions of Digitized Titles & Archive Editions",
+            "formats": "EPUB, Text, DJVU",
+            "description": "Open editable library catalog backed by the Internet Archive. Search across millions of historical titles and full-text digitized public books.",
+            "access": "Free public domain & full-text archive reading, no account required for public editions.",
+        },
+    }
+
     def __init__(self, parent: wx.Window, download_dir: Path) -> None:
-        super().__init__(parent, title="Online Book Catalogs", size=(720, 640))
+        super().__init__(parent, title="Online Book Catalogs", size=(750, 680))
         from book_reader.backend.gutenberg import (
             GUTENBERG_CATEGORIES,
             CatalogBook,
@@ -1290,6 +1311,15 @@ class OnlineLibrariesDialog(wx.Dialog):
         lib_box.Add(lib_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
         lib_box.Add(self.lib_choice, 1, wx.EXPAND)
         vbox.Add(lib_box, 0, wx.EXPAND | wx.ALL, 8)
+
+        # Library details and status text card
+        self.lib_info_ctrl = wx.TextCtrl(
+            panel,
+            style=wx.TE_MULTILINE | wx.TE_READONLY,
+            size=(-1, 62),
+        )
+        self.lib_info_ctrl.SetName("Library information and status")
+        vbox.Add(self.lib_info_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Category / Topic row
         cat_box = wx.BoxSizer(wx.HORIZONTAL)
@@ -1377,11 +1407,28 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
+        # Initial library status display
+        self._update_library_info()
+
     def _on_close(self, event: wx.CloseEvent) -> None:
         with self._lock:
             self._is_active = False
             self._search_seq += 1
         event.Skip()
+
+    def _update_library_info(self) -> None:
+        lib_name = self.lib_choice.GetStringSelection()
+        info = self.LIBRARY_INFO.get(lib_name, {})
+        status_text = info.get("status", "Online")
+        formats = info.get("formats", "EPUB")
+        desc = info.get("description", "")
+        access = info.get("access", "Free")
+        summary = (
+            f"Catalog: {lib_name} ({status_text})\n"
+            f"Formats: {formats} | Access: {access}\n"
+            f"Features: {desc}"
+        )
+        self.lib_info_ctrl.SetValue(summary)
 
     def _on_lib_changed(self, _event: wx.Event) -> None:
         lib_name = self.lib_choice.GetStringSelection()
@@ -1389,7 +1436,10 @@ class OnlineLibrariesDialog(wx.Dialog):
             self.cat_choice.Enable(True)
         else:
             self.cat_choice.Enable(False)
-        self.status_lbl.SetLabel(f"Selected {lib_name}. Press Search (Alt+S) to load books.")
+        self._update_library_info()
+        info = self.LIBRARY_INFO.get(lib_name, {})
+        status_text = info.get("status", "Online")
+        self.status_lbl.SetLabel(f"Selected {lib_name} ({status_text}). Press Search (Alt+S) to load books.")
 
     def _on_category_changed(self, _event: wx.Event) -> None:
         cat_name = self.cat_choice.GetStringSelection()
