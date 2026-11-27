@@ -808,7 +808,7 @@ class BookReaderFrame(wx.Frame):
                 self.open_book_path(dlg.selected_path)
 
     def _on_online_libraries_dialog(self, _event: wx.Event) -> None:
-        download_dir = Path(self.store.data_dir) / "downloads"
+        download_dir = self.store.get_online_download_dir()
         with OnlineLibrariesDialog(self, download_dir) as dlg:
             if dlg.ShowModal() == wx.ID_OK and dlg.downloaded_path:
                 self.open_book_path(str(dlg.downloaded_path))

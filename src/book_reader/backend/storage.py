@@ -33,6 +33,7 @@ class StateStore:
                 "voice_id": "",
                 "library_folder": "",
                 "auto_save_library": False,
+                "online_download_dir": "",
             },
             "positions": {},
             "bookmarks": [],
@@ -145,3 +146,10 @@ class StateStore:
         except OSError:
             pass
         return added_count
+
+    def get_online_download_dir(self) -> Path:
+        custom = str(self.data.get("preferences", {}).get("online_download_dir", "")).strip()
+        if custom:
+            return Path(custom)
+        return self.data_dir / "downloads"
+

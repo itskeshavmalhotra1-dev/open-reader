@@ -45,6 +45,11 @@ def test_state_store_bookmarks_and_positions(tmp_path: Path) -> None:
     assert store.remove_from_library(book_file)
     assert not store.is_in_library(book_file)
 
+    # Online download dir preference test
+    assert store.get_online_download_dir() == tmp_path / "downloads"
+    store.data["preferences"]["online_download_dir"] = str(sub_dir)
+    assert store.get_online_download_dir() == sub_dir
+
 
 def test_read_aloud_controller_steps_through_sentences() -> None:
     spoken: list[str] = []
@@ -119,6 +124,14 @@ def test_settings_engine_status_and_piper_manager_dialog() -> None:
         status = dlg.engine_status_ctrl.GetValue()
         assert "Piper Offline Neural TTS" in status
         assert dlg.manage_piper_btn.IsEnabled()
+
+        # Test online download destination controls
+        assert dlg.dl_folder_text.GetValue() == ""
+        dlg.dl_folder_text.SetValue("C:\\MyDownloadedBooks")
+        assert dlg.get_updated_prefs()["online_download_dir"] == "C:\\MyDownloadedBooks"
+        dlg._on_reset_download_folder(None)
+        assert dlg.dl_folder_text.GetValue() == ""
+        assert dlg.get_updated_prefs()["online_download_dir"] == ""
     finally:
         dlg.Destroy()
         app.ProcessPendingEvents()
