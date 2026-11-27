@@ -1313,7 +1313,10 @@ class OnlineLibrariesDialog(wx.Dialog):
         vbox.Add(search_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Status indicator
-        self.status_lbl = wx.StaticText(panel, label="Loading popular titles...")
+        self.status_lbl = wx.StaticText(
+            panel,
+            label="Select a library and category or enter a search query, then press Search (Alt+S).",
+        )
         vbox.Add(self.status_lbl, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
         # Results list
@@ -1354,7 +1357,7 @@ class OnlineLibrariesDialog(wx.Dialog):
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.download_btn = wx.Button(panel, wx.ID_OK, "&Download and Read")
         self.download_btn.Enable(False)
-        self.download_btn.SetDefault()
+        self.search_btn.SetDefault()
         cancel_btn = wx.Button(panel, wx.ID_CANCEL, "&Close")
         btn_sizer.Add(self.download_btn, 0, wx.RIGHT, 8)
         btn_sizer.Add(cancel_btn, 0)
@@ -1362,6 +1365,7 @@ class OnlineLibrariesDialog(wx.Dialog):
 
         panel.SetSizer(vbox)
 
+        # Event bindings
         self.lib_choice.Bind(wx.EVT_CHOICE, self._on_lib_changed)
         self.cat_choice.Bind(wx.EVT_CHOICE, self._on_category_changed)
         self.query_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_search)
@@ -1372,9 +1376,6 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self._on_download)
         self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
         self.Bind(wx.EVT_CLOSE, self._on_close)
-
-        # Auto-load initial popular titles from selected library on open
-        wx.CallAfter(self._trigger_load, True)
 
     def _on_close(self, event: wx.CloseEvent) -> None:
         with self._lock:
@@ -1388,10 +1389,11 @@ class OnlineLibrariesDialog(wx.Dialog):
             self.cat_choice.Enable(True)
         else:
             self.cat_choice.Enable(False)
-        self._trigger_load(reset_page=True)
+        self.status_lbl.SetLabel(f"Selected {lib_name}. Press Search (Alt+S) to load books.")
 
     def _on_category_changed(self, _event: wx.Event) -> None:
-        self._trigger_load(reset_page=True)
+        cat_name = self.cat_choice.GetStringSelection()
+        self.status_lbl.SetLabel(f"Selected category '{cat_name}'. Press Search (Alt+S) to load books.")
 
     def _on_search(self, _event: wx.Event) -> None:
         self._trigger_load(reset_page=True)
