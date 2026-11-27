@@ -31,10 +31,13 @@ class StateStore:
                 "high_contrast": False,
                 "speech_rate": 0,
                 "voice_id": "",
+                "library_folder": "",
+                "auto_save_library": False,
             },
             "positions": {},
             "bookmarks": [],
             "recent_books": [],
+            "library": [],
         }
         self.load()
 
@@ -44,7 +47,9 @@ class StateStore:
         try:
             loaded = json.loads(self.state_file.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
-                for key in ("preferences", "positions", "bookmarks", "recent_books"):
+                if isinstance(loaded.get("preferences"), dict):
+                    self.data["preferences"].update(loaded["preferences"])
+                for key in ("positions", "bookmarks", "recent_books", "library"):
                     if key in loaded:
                         self.data[key] = loaded[key]
         except (OSError, json.JSONDecodeError):
@@ -92,3 +97,51 @@ class StateStore:
             for item in self.data.get("bookmarks", [])
             if item.get("book_path") == norm
         ]
+
+    # --- Library Management ---
+
+    def is_in_library(self, book_path: str) -> bool:
+        norm = str(Path(book_path))
+        return any(str(Path(b.get("path", ""))) == norm for b in self.data.get("library", []))
+
+    def add_to_library(self, book_path: str, title: str | None = None, format_name: str | None = None) -> bool:
+        norm = str(Path(book_path))
+        if self.is_in_library(norm):
+            return False
+        p = Path(norm)
+        entry = {
+            "path": norm,
+            "title": title or p.stem,
+            "format": format_name or p.suffix.lstrip(".").upper(),
+            "added_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        self.data.setdefault("library", []).append(entry)
+        self.save()
+        return True
+
+    def remove_from_library(self, book_path: str) -> bool:
+        norm = str(Path(book_path))
+        before = len(self.data.get("library", []))
+        self.data["library"] = [b for b in self.data.get("library", []) if str(Path(b.get("path", ""))) != norm]
+        if len(self.data["library"]) < before:
+            self.save()
+            return True
+        return False
+
+    def get_library(self) -> list[dict[str, Any]]:
+        return list(self.data.get("library", []))
+
+    def scan_folder_into_library(self, folder_path: str) -> int:
+        folder = Path(folder_path)
+        if not folder.is_dir():
+            return 0
+        extensions = {".epub", ".pdf", ".docx", ".opf", ".html", ".htm", ".xhtml", ".md", ".txt"}
+        added_count = 0
+        try:
+            for item in folder.rglob("*"):
+                if item.is_file() and item.suffix.lower() in extensions:
+                    if self.add_to_library(str(item), title=item.stem, format_name=item.suffix.lstrip(".").upper()):
+                        added_count += 1
+        except OSError:
+            pass
+        return added_count

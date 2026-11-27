@@ -19,6 +19,58 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+fn is_abbreviation(chars: &[char], dot_idx: usize) -> bool {
+    let mut k = dot_idx;
+    while k > 0 && (chars[k - 1].is_alphanumeric() || chars[k - 1] == '.') {
+        k -= 1;
+    }
+    let token: String = chars[k..dot_idx].iter().collect();
+    let lower = token.to_ascii_lowercase();
+    if token.chars().count() == 1 && token.chars().all(|c| c.is_ascii_alphabetic()) {
+        return true;
+    }
+    matches!(
+        lower.as_str(),
+        "mr" | "mrs" | "ms" | "dr" | "prof" | "sr" | "jr" | "st" | "vs" | "etc"
+            | "e.g" | "i.e" | "a.m" | "p.m" | "u.s" | "u.k" | "no" | "vol" | "ch" | "fig"
+    )
+}
+
+fn should_split_at_newline(chars: &[char], nl_idx: usize, start: usize) -> bool {
+    let n = chars.len();
+    // Double newline (blank line) always splits paragraphs
+    let mut j = nl_idx + 1;
+    while j < n && matches!(chars[j], ' ' | '\t' | '\r') {
+        j += 1;
+    }
+    if j >= n || chars[j] == '\n' {
+        return true;
+    }
+
+    let slice: String = chars[start..nl_idx].iter().collect();
+    let trimmed = slice.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.starts_with("--- Page ") || trimmed.starts_with('#') {
+        return true;
+    }
+    if chars[j] == '#' || chars[j] == '-' || chars[j] == '*' {
+        return true;
+    }
+
+    let last_ch = trimmed.chars().last().unwrap_or(' ');
+    if matches!(last_ch, ',' | ';' | ':' | '-' | '\u{2014}' | '\u{2013}') {
+        return false;
+    }
+    // If the next line starts with a lowercase letter, it's a PDF/text line wrap, not a new sentence
+    if chars[j].is_lowercase() {
+        return false;
+    }
+    // Short heading/title line followed by uppercase
+    trimmed.chars().count() < 55 && (chars[j].is_uppercase() || chars[j].is_ascii_digit())
+}
+
 /// Split plain text into sentence spans using Python-compatible character indices.
 #[pyfunction]
 pub fn split_sentences(text: &str) -> Vec<SentenceSpan> {
@@ -34,6 +86,18 @@ pub fn split_sentences(text: &str) -> Vec<SentenceSpan> {
         let is_newline = ch == '\n';
 
         if is_sentence_end {
+            // Handle ellipsis (...) cleanly
+            if ch == '.' && i + 1 < n && chars[i + 1] == '.' {
+                while i + 1 < n && chars[i + 1] == '.' {
+                    i += 1;
+                }
+                i += 1;
+                continue;
+            }
+            if ch == '.' && is_abbreviation(&chars, i) {
+                i += 1;
+                continue;
+            }
             let mut end = i + 1;
             while end < n && matches!(chars[end], '"' | '\'' | ')' | ']' | '\u{201D}' | '\u{2019}') {
                 end += 1;
@@ -54,7 +118,7 @@ pub fn split_sentences(text: &str) -> Vec<SentenceSpan> {
                 i = end;
                 continue;
             }
-        } else if is_newline {
+        } else if is_newline && should_split_at_newline(&chars, i, start) {
             let slice: String = chars[start..i].iter().collect();
             let trimmed = slice.trim();
             if !trimmed.is_empty() {

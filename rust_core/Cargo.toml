@@ -11,3 +11,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.24", features = ["extension-module"] }
 quick-xml = "0.36"
+rodio = "0.20"

@@ -3,23 +3,36 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import tempfile
+import threading
+import webbrowser
 import wx
 
+from book_reader import APP_NAME, __version__
 from book_reader.backend.engine import BACKEND_MODE, SentenceSpan, split_sentences
 from book_reader.backend.models import BookDocument, TocNode
 from book_reader.backend.navigation import NavLocation, NavigationController
 from book_reader.backend.parsers import load_book
 from book_reader.backend.storage import StateStore
+from book_reader.backend.updater import (
+    UpdateError,
+    UpdateInfo,
+    check_for_update,
+    download_update,
+)
 from book_reader.tts.speech import ReadAloudController, ScreenReaderAnnouncer
 from book_reader.ui.dialogs import (
     BookmarksDialog,
     GoToPageDialog,
+    LibraryDialog,
     SearchDialog,
     SettingsDialog,
 )
 
 SHORTCUTS_TEXT = """Navigation & Reader Shortcuts:
 - Ctrl+O: Open book (EPUB, PDF, DOCX, DAISY OPF, HTML, MD, TXT)
+- Ctrl+L: Open My Library (Bookshelf)
 - F6: Switch focus between Table of Contents and Reading View
 - Ctrl+PageDown / Ctrl+PageUp: Next / Previous section
 - Ctrl+Down / Ctrl+Up: Next / Previous heading (cross-chapter)
@@ -33,7 +46,7 @@ SHORTCUTS_TEXT = """Navigation & Reader Shortcuts:
 - Ctrl+D / Ctrl+B: Add Bookmark / Open Bookmarks
 - F5: Start or Stop Read Aloud
 - Alt+Right / Alt+Left: Next / Previous sentence
-- Ctrl+,: Open Settings
+- Ctrl+,: Open Settings (Display, Audio, Library Scanner)
 - F1: Show this Keyboard Shortcuts help"""
 
 
@@ -47,7 +60,7 @@ class BookReaderFrame(wx.Frame):
     ) -> None:
         super().__init__(
             None,
-            title="Accessible Book Reader Prototype",
+            title=APP_NAME,
             size=(1024, 720),
         )
         self.store = StateStore(data_dir=data_dir)
@@ -60,6 +73,7 @@ class BookReaderFrame(wx.Frame):
         self.nav = NavigationController()
         self.current_chapter_idx = 0
         self.sentences: list[SentenceSpan] = []
+        self._tts_active_span: SentenceSpan | None = None
         self.single_key_nav = False
         self._toc_items: list[tuple[wx.TreeItemId, int, int]] = []
 
@@ -67,6 +81,10 @@ class BookReaderFrame(wx.Frame):
         self._build_ui()
         self._apply_preferences()
         self._update_status("Ready. Press Ctrl+O to open a book.")
+
+        # Warm up voice lists in background thread so opening Settings is instant
+        import threading
+        threading.Thread(target=lambda: (ReadAloudController.list_sapi_voices(), ReadAloudController.list_onecore_voices(), ReadAloudController.list_edge_voices(), ReadAloudController.list_piper_voices()), daemon=True).start()
 
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
@@ -78,6 +96,9 @@ class BookReaderFrame(wx.Frame):
 
         file_menu = wx.Menu()
         m_open = file_menu.Append(wx.ID_OPEN, "&Open Book...\tCtrl+O", "Open an e-book file")
+        m_lib = file_menu.Append(wx.ID_ANY, "My &Library...\tCtrl+L", "Open your books library")
+        file_menu.AppendSeparator()
+        m_prefs = file_menu.Append(wx.ID_PREFERENCES, "&Settings...\tCtrl+,", "Open Settings")
         file_menu.AppendSeparator()
         m_exit = file_menu.Append(wx.ID_EXIT, "E&xit\tAlt+F4", "Close the application")
         menubar.Append(file_menu, "&File")
@@ -121,17 +142,17 @@ class BookReaderFrame(wx.Frame):
         m_list_bm = bm_menu.Append(wx.ID_ANY, "&Bookmarks...\tCtrl+B")
         menubar.Append(bm_menu, "&Bookmarks")
 
-        settings_menu = wx.Menu()
-        m_prefs = settings_menu.Append(wx.ID_PREFERENCES, "&Reader Settings...\tCtrl+,")
-        menubar.Append(settings_menu, "&Settings")
-
         help_menu = wx.Menu()
         m_keys = help_menu.Append(wx.ID_HELP, "&Keyboard Shortcuts\tF1")
+        m_updates = help_menu.Append(wx.ID_ANY, "Check for &Updates...")
+        m_about = help_menu.Append(wx.ID_ABOUT, "&About Open Reader")
         menubar.Append(help_menu, "&Help")
 
         self.SetMenuBar(menubar)
 
+        self.Bind(wx.EVT_MENU, self._on_settings, m_prefs)
         self.Bind(wx.EVT_MENU, self._on_open_dialog, m_open)
+        self.Bind(wx.EVT_MENU, self._on_library_dialog, m_lib)
         self.Bind(wx.EVT_MENU, lambda _e: self.Close(), m_exit)
         self.Bind(wx.EVT_MENU, self._on_toggle_pane_focus, m_focus)
         self.Bind(wx.EVT_MENU, lambda _e: self.go_back(), m_back)
@@ -153,6 +174,8 @@ class BookReaderFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self._on_list_bookmarks, m_list_bm)
         self.Bind(wx.EVT_MENU, self._on_settings, m_prefs)
         self.Bind(wx.EVT_MENU, self._on_help_shortcuts, m_keys)
+        self.Bind(wx.EVT_MENU, self._on_check_updates, m_updates)
+        self.Bind(wx.EVT_MENU, self._on_about, m_about)
 
     def _build_ui(self) -> None:
         self.CreateStatusBar()
@@ -181,7 +204,7 @@ class BookReaderFrame(wx.Frame):
         )
         self.reader_ctrl.SetName("Book reading view")
         self.reader_ctrl.SetValue(
-            "Welcome to Accessible Book Reader Prototype.\n\n"
+            f"Welcome to {APP_NAME} v{__version__}.\n\n"
             "Press Ctrl+O to open an EPUB, PDF, DOCX, DAISY OPF, HTML, Markdown, or TXT file.\n"
             "Press F1 at any time for navigation shortcuts."
         )
@@ -202,6 +225,7 @@ class BookReaderFrame(wx.Frame):
         self.tts.configure(
             rate=int(prefs.get("speech_rate", 0)),
             voice_id=str(prefs.get("voice_id", "")),
+            engine=str(prefs.get("tts_engine", "edge")),
         )
 
         font = wx.Font(
@@ -293,7 +317,7 @@ class BookReaderFrame(wx.Frame):
 
         self.book = book
         self.nav.set_book(book)
-        self.SetTitle(f"{book.title} - Accessible Book Reader")
+        self.SetTitle(f"{book.title} - {APP_NAME}")
         self._populate_toc()
 
         saved_chap, saved_offset = self.store.get_position(book.source_path)
@@ -352,14 +376,14 @@ class BookReaderFrame(wx.Frame):
         self.reader_ctrl.SetValue(display_text)
 
         # Adjust insertion point to account for the prefix line
-        prefix_len = len(self.prev_marker) + 1  # newline
-        safe_pos = max(0, min(char_offset + prefix_len, len(display_text)))
-        self.reader_ctrl.SetInsertionPoint(safe_pos)
-        self.reader_ctrl.ShowPosition(safe_pos)
+        chap_pos = max(0, min(char_offset, len(chap.text)))
+        display_pos = self._to_display_pos(chap_pos)
+        self.reader_ctrl.SetInsertionPoint(display_pos)
+        self.reader_ctrl.ShowPosition(display_pos)
 
         # Save position without navigation markers
-        self.store.save_position(self.book.source_path, chapter_index, safe_pos - prefix_len)
-        self._sync_toc_selection(chapter_index, safe_pos - prefix_len)
+        self.store.save_position(self.book.source_path, chapter_index, chap_pos)
+        self._sync_toc_selection(chapter_index, chap_pos)
         self._update_status(f"Section {chapter_index + 1}/{self.book.chapter_count}: {chap.title}")
         if announce:
             self.announcer.say(f"Section {chapter_index + 1}: {chap.title}", interrupt=True)
@@ -461,7 +485,7 @@ class BookReaderFrame(wx.Frame):
             return
         res = self.nav.step_heading(
             self.current_chapter_idx,
-            self.reader_ctrl.GetInsertionPoint(),
+            self._current_location().char_offset,
             delta,
             level=level,
         )
@@ -481,7 +505,7 @@ class BookReaderFrame(wx.Frame):
             return
         loc = self.nav.step_paragraph(
             self.current_chapter_idx,
-            self.reader_ctrl.GetInsertionPoint(),
+            self._current_location().char_offset,
             delta,
         )
         if loc is None:
@@ -513,7 +537,7 @@ class BookReaderFrame(wx.Frame):
     def _on_where_am_i(self, _event: wx.Event) -> None:
         summary = self.nav.where_am_i(
             self.current_chapter_idx,
-            self.reader_ctrl.GetInsertionPoint(),
+            self._current_location().char_offset,
         )
         self._update_status(summary)
         self.announcer.say(summary, interrupt=True)
@@ -526,7 +550,7 @@ class BookReaderFrame(wx.Frame):
 
 
     def _sentence_index_at_cursor(self) -> int:
-        pos = self.reader_ctrl.GetInsertionPoint()
+        pos = self._to_chapter_pos(self.reader_ctrl.GetInsertionPoint())
         for idx, span in enumerate(self.sentences):
             if span.end >= pos:
                 return idx
@@ -537,12 +561,18 @@ class BookReaderFrame(wx.Frame):
             return
         if self.tts.is_playing:
             self.tts.stop()
+            if self._tts_active_span is not None:
+                self._highlight_sentence(self._tts_active_span)
             self._update_status("Read aloud stopped")
             self.announcer.say("Read aloud stopped", interrupt=True)
         else:
             start_idx = self._sentence_index_at_cursor()
+            self._tts_active_span = self.sentences[start_idx]
+            # Silence any queued NVDA speech before starting narration
+            self.announcer.say(" ", interrupt=True)
             self._update_status("Reading aloud...")
-            self.tts.start(self.sentences, start_idx)
+            chap_text = self.book.chapters[self.current_chapter_idx].text
+            self.tts.start(self.sentences, start_idx, source_text=chap_text)
 
     def step_sentence(self, delta: int) -> None:
         if not self.book or not self.sentences:
@@ -551,21 +581,27 @@ class BookReaderFrame(wx.Frame):
         base = self.tts.current_index() if was_playing else self._sentence_index_at_cursor()
         target = max(0, min(len(self.sentences) - 1, base + delta))
         span = self.sentences[target]
-        self._highlight_sentence(span)
+        self._tts_active_span = span
         if was_playing:
-            self.tts.start(self.sentences, target)
+            chap_text = self.book.chapters[self.current_chapter_idx].text
+            self.tts.start(self.sentences, target, source_text=chap_text)
         else:
+            self._highlight_sentence(span)
             self.announcer.say(span.text, interrupt=True)
 
     def _highlight_sentence(self, span: SentenceSpan) -> None:
-        self.reader_ctrl.SetInsertionPoint(span.start)
-        self.reader_ctrl.SetSelection(span.start, span.end)
-        self.reader_ctrl.ShowPosition(span.start)
+        start = self._to_display_pos(span.start)
+        end = self._to_display_pos(span.end)
+        self.reader_ctrl.SetInsertionPoint(start)
+        self.reader_ctrl.SetSelection(start, end)
+        self.reader_ctrl.ShowPosition(start)
 
     def _on_tts_sentence_bg(self, idx: int, span: SentenceSpan) -> None:
         def update_ui() -> None:
             if self and not self.IsBeingDeleted():
-                self._highlight_sentence(span)
+                # Do NOT move caret/selection while Read Aloud is playing,
+                # otherwise NVDA speaks every caret/selection change over the audio!
+                self._tts_active_span = span
                 self._update_status(f"Reading sentence {idx + 1}/{len(self.sentences)}")
 
         wx.CallAfter(update_ui)
@@ -573,6 +609,8 @@ class BookReaderFrame(wx.Frame):
     def _on_tts_finished_bg(self) -> None:
         def update_ui() -> None:
             if self and not self.IsBeingDeleted():
+                if self._tts_active_span is not None:
+                    self._highlight_sentence(self._tts_active_span)
                 self._update_status("Finished section")
 
         wx.CallAfter(update_ui)
@@ -585,16 +623,18 @@ class BookReaderFrame(wx.Frame):
             if dlg.ShowModal() == wx.ID_OK and dlg.selected_hit is not None:
                 hit = dlg.selected_hit
                 self.nav.record_jump(self._current_location())
-                self.reader_ctrl.SetInsertionPoint(hit.start)
-                self.reader_ctrl.SetSelection(hit.start, hit.end)
-                self.reader_ctrl.ShowPosition(hit.start)
+                start = self._to_display_pos(hit.start)
+                end = self._to_display_pos(hit.end)
+                self.reader_ctrl.SetInsertionPoint(start)
+                self.reader_ctrl.SetSelection(start, end)
+                self.reader_ctrl.ShowPosition(start)
                 self.reader_ctrl.SetFocus()
                 self.announcer.say(f"Line {hit.line_number}: {hit.snippet}", interrupt=True)
 
     def _on_add_bookmark(self, _event: wx.Event) -> None:
         if not self.book:
             return
-        pos = self.reader_ctrl.GetInsertionPoint()
+        pos = self._to_chapter_pos(self.reader_ctrl.GetInsertionPoint())
         chap = self.book.chapters[self.current_chapter_idx]
         preview = chap.text[pos : pos + 45].replace("\n", " ").strip()
         default_label = preview or chap.title
@@ -623,9 +663,24 @@ class BookReaderFrame(wx.Frame):
                 )
                 self.reader_ctrl.SetFocus()
 
+    def _on_library_dialog(self, _event: wx.Event) -> None:
+        lib_books = self.store.get_library()
+        with LibraryDialog(self, lib_books) as dlg:
+            res = dlg.ShowModal()
+            if dlg.book_to_delete:
+                self.store.remove_from_library(dlg.book_to_delete)
+            if res == wx.ID_OK and dlg.selected_path:
+                self.open_book_path(dlg.selected_path)
+
     def _on_settings(self, _event: wx.Event) -> None:
-        voices = self.tts.list_voices()
-        with SettingsDialog(self, self.store.data["preferences"], voices) as dlg:
+        voices = self.tts.list_sapi_voices()
+        with SettingsDialog(
+            self,
+            self.store.data["preferences"],
+            voices,
+            on_scan_folder=self.store.scan_folder_into_library,
+            tts_controller=self.tts,
+        ) as dlg:
             if dlg.ShowModal() == wx.ID_OK:
                 self.store.data["preferences"] = dlg.get_updated_prefs()
                 self.store.save()
@@ -634,6 +689,128 @@ class BookReaderFrame(wx.Frame):
 
     def _on_help_shortcuts(self, _event: wx.Event) -> None:
         wx.MessageBox(SHORTCUTS_TEXT, "Keyboard Shortcuts", wx.OK | wx.ICON_INFORMATION, self)
+
+    def _on_about(self, _event: wx.Event) -> None:
+        wx.MessageBox(
+            f"{APP_NAME} v{__version__}\n"
+            "Open-source desktop book reader (EPUB, PDF, DOCX, DAISY, HTML, Markdown, TXT).",
+            f"About {APP_NAME}",
+            wx.OK | wx.ICON_INFORMATION,
+            self,
+        )
+
+    def _on_check_updates(self, _event: wx.Event) -> None:
+        self.SetStatusText("Checking for updates on GitHub...")
+        self.announcer.say("Checking for updates", interrupt=True)
+
+        def _worker() -> None:
+            try:
+                info = check_for_update(__version__)
+                wx.CallAfter(self._handle_update_result, info)
+            except UpdateError as exc:
+                wx.CallAfter(self._handle_update_error, str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _handle_update_error(self, message: str) -> None:
+        self.SetStatusText("Update check failed.")
+        wx.MessageBox(message, "Check for Updates", wx.OK | wx.ICON_INFORMATION, self)
+
+    def _handle_update_result(self, info: UpdateInfo) -> None:
+        if not info.update_available:
+            self.SetStatusText(f"{APP_NAME} is up to date (v{__version__}).")
+            wx.MessageBox(
+                f"You are using the latest version of {APP_NAME} (v{__version__}).",
+                "Check for Updates",
+                wx.OK | wx.ICON_INFORMATION,
+                self,
+            )
+            return
+
+        self.SetStatusText(f"Update available: v{info.latest_version}")
+        notes_preview = info.release_notes[:400] + ("..." if len(info.release_notes) > 400 else "")
+        prompt = (
+            f"A new version of {APP_NAME} is available!\n\n"
+            f"Current version: v{info.current_version}\n"
+            f"Latest version: v{info.latest_version}\n"
+        )
+        if notes_preview:
+            prompt += f"\nRelease notes:\n{notes_preview}\n"
+
+        if info.asset_url and info.asset_name and info.asset_name.lower().endswith(".exe"):
+            prompt += f"\nDownload and install {info.asset_name} now?"
+            choice = wx.MessageBox(prompt, "Update Available", wx.YES_NO | wx.ICON_QUESTION, self)
+            if choice == wx.YES:
+                self._download_and_install_update(info)
+        else:
+            prompt += "\nOpen the GitHub release page in your browser?"
+            choice = wx.MessageBox(prompt, "Update Available", wx.YES_NO | wx.ICON_QUESTION, self)
+            if choice == wx.YES:
+                webbrowser.open(info.release_url)
+
+    def _download_and_install_update(self, info: UpdateInfo) -> None:
+        assert info.asset_url and info.asset_name
+        progress = wx.ProgressDialog(
+            "Downloading Update",
+            f"Downloading {info.asset_name}...",
+            maximum=100,
+            parent=self,
+            style=wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE,
+        )
+        cancelled = False
+
+        def _on_progress(downloaded: int, total: int) -> bool:
+            nonlocal cancelled
+            pct = min(99, int((downloaded * 100) / total)) if total > 0 else 0
+            cont_holder = [True]
+
+            def _update_dlg() -> None:
+                if progress:
+                    cont, _ = progress.Update(
+                        pct,
+                        f"Downloaded {downloaded // 1024} KB"
+                        + (f" of {total // 1024} KB" if total > 0 else "..."),
+                    )
+                    cont_holder[0] = cont
+
+            wx.CallAfter(_update_dlg)
+            if cancelled:
+                return False
+            return cont_holder[0]
+
+        def _worker() -> None:
+            dest_dir = Path(tempfile.gettempdir()) / "OpenReaderUpdate"
+            try:
+                installer_path = download_update(
+                    info.asset_url,
+                    dest_dir,
+                    info.asset_name,
+                    expected_size=info.asset_size,
+                    progress_cb=_on_progress,
+                )
+                wx.CallAfter(self._launch_downloaded_installer, progress, installer_path)
+            except UpdateError as exc:
+                wx.CallAfter(self._on_download_failed, progress, str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_download_failed(self, progress: wx.ProgressDialog, message: str) -> None:
+        progress.Destroy()
+        wx.MessageBox(message, "Update Download Failed", wx.OK | wx.ICON_ERROR, self)
+
+    def _launch_downloaded_installer(self, progress: wx.ProgressDialog, installer_path: Path) -> None:
+        progress.Update(100, "Launching installer...")
+        progress.Destroy()
+        try:
+            subprocess.Popen([str(installer_path)], shell=False)
+            self.Close()
+        except Exception as exc:
+            wx.MessageBox(
+                f"Downloaded installer to:\n{installer_path}\n\nCould not launch automatically: {exc}",
+                "Launch Installer",
+                wx.OK | wx.ICON_ERROR,
+                self,
+            )
 
     def _on_close(self, event: wx.CloseEvent) -> None:
         self.tts.stop()
@@ -645,4 +822,16 @@ class BookReaderFrame(wx.Frame):
                 self.current_chapter_idx,
                 chap_pos,
             )
+
+            # Check if book is already in library
+            auto_save = bool(self.store.data.get("preferences", {}).get("auto_save_library", False))
+            if not self.store.is_in_library(self.book.source_path):
+                if auto_save:
+                    self.store.add_to_library(self.book.source_path, self.book.title, self.book.format_name)
+                elif event.CanVeto():
+                    prompt = f"'{self.book.title}' is not in your Library.\nWould you like to add it to your Library?"
+                    ans = wx.MessageBox(prompt, "Add to Library?", wx.YES_NO | wx.ICON_QUESTION, self)
+                    if ans == wx.YES:
+                        self.store.add_to_library(self.book.source_path, self.book.title, self.book.format_name)
+
         event.Skip()

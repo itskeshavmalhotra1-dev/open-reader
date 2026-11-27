@@ -1,3 +1,4 @@
-"""Accessible Book Reader package (Rust PyO3 backend + wxPython frontend)."""
+"""Open Reader package (Rust PyO3 backend + wxPython frontend)."""
 
-__version__ = "0.1.0"
+APP_NAME = "Open Reader"
+__version__ = "26.0.0"

@@ -216,9 +216,50 @@ def _py_split_sentences(text: str) -> list[SentenceSpan]:
         trail = len(segment) - len(segment.rstrip())
         spans.append(SentenceSpan(raw_start + lead, raw_end - trail, trimmed))
 
+    abbrevs = {
+        "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc",
+        "e.g", "i.e", "a.m", "p.m", "u.s", "u.k", "no", "vol", "ch", "fig",
+    }
+
+    def is_abbrev(dot_idx: int) -> bool:
+        k = dot_idx
+        while k > 0 and (text[k - 1].isalnum() or text[k - 1] == "."):
+            k -= 1
+        tok = text[k:dot_idx]
+        if len(tok) == 1 and tok.isalpha():
+            return True
+        return tok.lower() in abbrevs
+
+    def should_split_nl(nl_idx: int, cur_start: int) -> bool:
+        j = nl_idx + 1
+        while j < n and text[j] in (" ", "\t", "\r"):
+            j += 1
+        if j >= n or text[j] == "\n":
+            return True
+        trimmed = text[cur_start:nl_idx].strip()
+        if not trimmed:
+            return True
+        if trimmed.startswith("--- Page ") or trimmed.startswith("#"):
+            return True
+        if text[j] in ("#", "-", "*"):
+            return True
+        if trimmed[-1] in (",", ";", ":", "-", "\u2014", "\u2013"):
+            return False
+        if text[j].islower():
+            return False
+        return len(trimmed) < 55 and (text[j].isupper() or text[j].isdigit())
+
     while i < n:
         ch = text[i]
         if ch in enders:
+            if ch == "." and i + 1 < n and text[i + 1] == ".":
+                while i + 1 < n and text[i + 1] == ".":
+                    i += 1
+                i += 1
+                continue
+            if ch == "." and is_abbrev(i):
+                i += 1
+                continue
             end = i + 1
             while end < n and text[end] in closing:
                 end += 1
@@ -227,7 +268,7 @@ def _py_split_sentences(text: str) -> list[SentenceSpan]:
                 start = end
                 i = end
                 continue
-        elif ch == "\n":
+        elif ch == "\n" and should_split_nl(i, start):
             emit(start, i)
             start = i + 1
         i += 1

@@ -11,6 +11,15 @@ build/
 .pytest_cache/
 .coverage
 
+# Nuitka, PyInstaller & Installer outputs
+*.build/
+*.dist/
+*.onefile-build/
+*.spec
+build_output/
+installer_output/
+*.exe
+
 # Rust
 target/
 Cargo.lock
@@ -21,5 +30,6 @@ Thumbs.db
 .env
 *.log
 
-# Local user data
+# Local user data & notes
 .book_reader_data/
+EASYREADER_AND_THORIUM_RESEARCH_REPORT.md
