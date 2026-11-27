@@ -1258,18 +1258,22 @@ class OnlineLibrariesDialog(wx.Dialog):
     ]
 
     def __init__(self, parent: wx.Window, download_dir: Path) -> None:
-        super().__init__(parent, title="Online Book Catalogs", size=(720, 620))
+        super().__init__(parent, title="Online Book Catalogs", size=(720, 640))
         from book_reader.backend.gutenberg import (
             GUTENBERG_CATEGORIES,
             CatalogBook,
             download_catalog_book,
-            search_online_library,
+            fetch_online_catalog_page,
         )
         import threading
 
         self.download_dir = download_dir
         self.books: list[CatalogBook] = []
         self.downloaded_path: Path | None = None
+        self._current_page: int = 1
+        self._total_count: int = 0
+        self._has_next: bool = False
+        self._has_prev: bool = False
         self._search_seq: int = 0
         self._lock = threading.Lock()
         self._is_active = True
@@ -1319,6 +1323,24 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.results_list.SetName("Available books")
         vbox.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 8)
 
+        # Pagination controls row
+        page_box = wx.BoxSizer(wx.HORIZONTAL)
+        self.prev_page_btn = wx.Button(panel, label="&Previous Page")
+        self.prev_page_btn.SetName("Previous page of books")
+        self.prev_page_btn.Enable(False)
+
+        self.page_indicator = wx.StaticText(panel, label="Page 1")
+        self.page_indicator.SetName("Current page indicator")
+
+        self.next_page_btn = wx.Button(panel, label="&Next Page")
+        self.next_page_btn.SetName("Next page of books")
+        self.next_page_btn.Enable(False)
+
+        page_box.Add(self.prev_page_btn, 0, wx.RIGHT, 8)
+        page_box.Add(self.page_indicator, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        page_box.Add(self.next_page_btn, 0)
+        vbox.Add(page_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
         # Details text
         self.details_ctrl = wx.TextCtrl(
             panel,
@@ -1344,13 +1366,15 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.cat_choice.Bind(wx.EVT_CHOICE, self._on_category_changed)
         self.query_ctrl.Bind(wx.EVT_TEXT_ENTER, self._on_search)
         self.search_btn.Bind(wx.EVT_BUTTON, self._on_search)
+        self.prev_page_btn.Bind(wx.EVT_BUTTON, self._on_prev_page)
+        self.next_page_btn.Bind(wx.EVT_BUTTON, self._on_next_page)
         self.results_list.Bind(wx.EVT_LISTBOX, self._on_select)
         self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self._on_download)
         self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
         # Auto-load initial popular titles from selected library on open
-        wx.CallAfter(self._trigger_load)
+        wx.CallAfter(self._trigger_load, True)
 
     def _on_close(self, event: wx.CloseEvent) -> None:
         with self._lock:
@@ -1364,16 +1388,25 @@ class OnlineLibrariesDialog(wx.Dialog):
             self.cat_choice.Enable(True)
         else:
             self.cat_choice.Enable(False)
-        self._trigger_load()
+        self._trigger_load(reset_page=True)
 
     def _on_category_changed(self, _event: wx.Event) -> None:
-        self._trigger_load()
+        self._trigger_load(reset_page=True)
 
     def _on_search(self, _event: wx.Event) -> None:
-        self._trigger_load()
+        self._trigger_load(reset_page=True)
 
-    def _trigger_load(self) -> None:
-        from book_reader.backend.gutenberg import search_online_library
+    def _on_prev_page(self, _event: wx.Event) -> None:
+        if self._current_page > 1:
+            self._current_page -= 1
+            self._trigger_load(reset_page=False)
+
+    def _on_next_page(self, _event: wx.Event) -> None:
+        self._current_page += 1
+        self._trigger_load(reset_page=False)
+
+    def _trigger_load(self, reset_page: bool = True) -> None:
+        from book_reader.backend.gutenberg import fetch_online_catalog_page
         import threading
 
         with self._lock:
@@ -1382,33 +1415,45 @@ class OnlineLibrariesDialog(wx.Dialog):
             self._search_seq += 1
             current_seq = self._search_seq
 
+        if reset_page:
+            self._current_page = 1
+
         lib_name = self.lib_choice.GetStringSelection()
         cat_name = self.cat_choice.GetStringSelection() if self.cat_choice.IsEnabled() else ""
         query = self.query_ctrl.GetValue().strip()
 
-        msg = f"Loading from {lib_name}"
+        msg = f"Loading {lib_name}"
         if query:
             msg += f" for '{query}'"
         elif cat_name and cat_name != "Popular Classics (All)":
             msg += f" in '{cat_name}'"
         else:
             msg += " (Popular titles)"
-        self.status_lbl.SetLabel(f"{msg}...")
+        self.status_lbl.SetLabel(f"{msg} (Loading Page {self._current_page})...")
 
         self.results_list.Clear()
         self.download_btn.Enable(False)
         self.search_btn.Enable(False)
+        self.prev_page_btn.Enable(False)
+        self.next_page_btn.Enable(False)
+
+        current_page = self._current_page
 
         def worker() -> None:
             try:
-                results = search_online_library(lib_name, query=query, category=cat_name)
-                wx.CallAfter(self._populate_results, results, current_seq)
+                page_data = fetch_online_catalog_page(
+                    lib_name,
+                    query=query,
+                    category=cat_name,
+                    page=current_page,
+                )
+                wx.CallAfter(self._populate_results, page_data, current_seq)
             except Exception as e:
                 wx.CallAfter(self._search_failed, str(e), current_seq)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _populate_results(self, results: list, seq: int) -> None:
+    def _populate_results(self, page_data, seq: int) -> None:
         with self._lock:
             if not self._is_active or seq != self._search_seq:
                 return
@@ -1416,17 +1461,28 @@ class OnlineLibrariesDialog(wx.Dialog):
             return
 
         self.search_btn.Enable(True)
-        self.books = results
+        self.books = page_data.books
+        self._total_count = page_data.total_count
+        self._has_next = page_data.has_next
+        self._has_prev = page_data.has_previous
+
+        self.prev_page_btn.Enable(self._has_prev)
+        self.next_page_btn.Enable(self._has_next)
+        self.page_indicator.SetLabel(f"Page {page_data.current_page} (Total: {page_data.total_count:,} books)")
+
         self.results_list.Clear()
-        if not results:
+        if not page_data.books:
             self.status_lbl.SetLabel("No books found matching query in this library.")
             return
 
-        for b in results:
+        for b in page_data.books:
             lang = f"[{','.join(b.languages)}]" if b.languages else ""
             self.results_list.Append(f"{b.title} — {b.author_display} {lang}")
 
-        self.status_lbl.SetLabel(f"Loaded {len(results)} books. Press Tab to Results list and press Enter to read.")
+        self.status_lbl.SetLabel(
+            f"Page {page_data.current_page} loaded ({len(page_data.books)} books). "
+            f"Alt+P: Prev Page, Alt+N: Next Page, Enter to read."
+        )
         self.results_list.SetSelection(0)
         self.download_btn.Enable(True)
         self._update_details()
@@ -1439,6 +1495,8 @@ class OnlineLibrariesDialog(wx.Dialog):
         if not self:
             return
         self.search_btn.Enable(True)
+        self.prev_page_btn.Enable(self._current_page > 1)
+        self.next_page_btn.Enable(self._has_next)
         self.status_lbl.SetLabel(f"Search failed: {error}")
 
     def _on_select(self, _event: wx.Event) -> None:

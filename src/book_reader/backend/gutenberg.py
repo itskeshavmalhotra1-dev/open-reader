@@ -1,4 +1,4 @@
-"""Online libraries catalog clients and book downloaders (Project Gutenberg, Standard Ebooks, Open Library)."""
+"""Online libraries catalog clients with real-time pagination (Project Gutenberg, Standard Ebooks, Open Library)."""
 
 from __future__ import annotations
 
@@ -52,8 +52,15 @@ class CatalogBook:
         return None
 
 
-# Backward compatibility alias
-GutenbergBook = CatalogBook
+@dataclass(frozen=True)
+class CatalogPage:
+    """A paginated page of books from an online library."""
+
+    books: list[CatalogBook]
+    total_count: int
+    current_page: int
+    has_next: bool
+    has_previous: bool
 
 
 GUTENBERG_CATEGORIES = [
@@ -69,24 +76,21 @@ GUTENBERG_CATEGORIES = [
     "Children's Literature",
 ]
 
-STANDARD_EBOOKS_FEEDS = [
-    ("Popular Titles", "https://standardebooks.org/opds/all"),
-    ("New Releases", "https://standardebooks.org/opds/new-releases"),
-]
 
-
-def search_gutenberg(query: str = "", topic: str = "", timeout: float = 12.0) -> list[CatalogBook]:
-    """Search Project Gutenberg books via Gutendex open API.
-    If query is empty, returns popular books or books in the given topic/category.
-    """
-    params = []
+def fetch_gutenberg_page(
+    query: str = "",
+    topic: str = "",
+    page: int = 1,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch live paginated books directly from Project Gutenberg (Gutendex)."""
+    params = [f"page={max(1, page)}"]
     if query.strip():
         params.append(f"search={urllib.parse.quote_plus(query.strip())}")
     if topic.strip() and topic != "Popular Classics (All)":
         params.append(f"topic={urllib.parse.quote_plus(topic.strip())}")
-    
-    query_str = ("?" + "&".join(params)) if params else ""
-    url = f"https://gutendex.com/books/{query_str}"
+
+    url = f"https://gutendex.com/books/?{'&'.join(params)}"
     req = Request(
         url,
         headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
@@ -109,10 +113,25 @@ def search_gutenberg(query: str = "", topic: str = "", timeout: float = 12.0) ->
             source="Project Gutenberg",
         )
         results.append(book)
-    return results
+
+    total = int(data.get("count", len(results)))
+    has_next = bool(data.get("next"))
+    has_prev = bool(data.get("previous"))
+
+    return CatalogPage(
+        books=results,
+        total_count=total,
+        current_page=page,
+        has_next=has_next,
+        has_previous=has_prev,
+    )
 
 
-def search_standard_ebooks(query: str = "", feed_url: str | None = None, timeout: float = 12.0) -> list[CatalogBook]:
+def search_standard_ebooks(
+    query: str = "",
+    feed_url: str | None = None,
+    timeout: float = 12.0,
+) -> list[CatalogBook]:
     """Search Standard Ebooks catalog via OPDS feed."""
     if query.strip():
         encoded = urllib.parse.quote_plus(query.strip())
@@ -163,11 +182,39 @@ def search_standard_ebooks(query: str = "", feed_url: str | None = None, timeout
     return results
 
 
-def search_open_library(query: str = "", subject: str = "", timeout: float = 12.0) -> list[CatalogBook]:
-    """Search Open Library for public domain / readable editions."""
+def fetch_standard_ebooks_page(
+    query: str = "",
+    feed_url: str | None = None,
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch paginated books from Standard Ebooks."""
+    all_books = search_standard_ebooks(query=query, feed_url=feed_url, timeout=timeout)
+    total = len(all_books)
+    start = (max(1, page) - 1) * limit
+    paged = all_books[start : start + limit]
+    return CatalogPage(
+        books=paged,
+        total_count=total,
+        current_page=page,
+        has_next=(start + limit) < total,
+        has_previous=page > 1,
+    )
+
+
+def fetch_open_library_page(
+    query: str = "",
+    subject: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch live paginated public books directly from Open Library / Internet Archive."""
     q_str = query.strip() or subject.strip() or "classics"
     encoded = urllib.parse.quote_plus(q_str)
-    url = f"https://openlibrary.org/search.json?q={encoded}&has_fulltext=true&limit=20"
+    url = f"https://openlibrary.org/search.json?q={encoded}&has_fulltext=true&limit={limit}&page={max(1, page)}"
+
     req = Request(
         url,
         headers={"User-Agent": "Open-Reader/26.0 (Accessibility desktop reader)"},
@@ -199,52 +246,33 @@ def search_open_library(query: str = "", subject: str = "", timeout: float = 12.
                     source="Open Library / Internet Archive",
                 )
             )
-    return results
+
+    total = int(data.get("numFound", len(results)))
+    has_next = (page * limit) < total
+    has_prev = page > 1
+
+    return CatalogPage(
+        books=results,
+        total_count=total,
+        current_page=page,
+        has_next=has_next,
+        has_previous=has_prev,
+    )
 
 
-def search_online_library(
+def fetch_online_catalog_page(
     source_name: str,
     query: str = "",
     category: str = "",
-    force_live: bool = False,
-) -> list[CatalogBook]:
-    """Search online libraries with a live-first strategy and persistent cache.
-    1. Attempts live network search from the actual library API so new books appear.
-    2. Merges newly found books with any previously cached or curated titles.
-    3. If remote API is offline/timing out, gracefully serves existing cached/curated titles.
-    """
-    from book_reader.backend.curated_books import CURATED_CATEGORY_BOOKS
-
-    cat_key = category if category in CURATED_CATEGORY_BOOKS else "Popular Classics (All)"
-    curated = list(CURATED_CATEGORY_BOOKS.get(cat_key, CURATED_CATEGORY_BOOKS["Popular Classics (All)"]))
-
-    live_results: list[CatalogBook] = []
-    try:
-        if source_name == "Standard Ebooks":
-            live_results = search_standard_ebooks(query=query)
-        elif "Open Library" in source_name:
-            live_results = search_open_library(query=query, subject=category)
-        else:
-            live_results = search_gutenberg(query=query, topic=category)
-    except Exception:
-        live_results = []
-
-    if live_results:
-        # Deduplicate and return live results at top, followed by any matching curated
-        seen_ids = {str(b.id) for b in live_results}
-        combined = list(live_results)
-        for b in curated:
-            if str(b.id) not in seen_ids:
-                if not query.strip() or (query.strip().lower() in b.title.lower()):
-                    combined.append(b)
-        return combined
-
-    # Fallback to curated if network is slow/offline
-    if query.strip():
-        q_lower = query.strip().lower()
-        matched = [b for b in curated if q_lower in b.title.lower() or any(q_lower in a.lower() for a in b.authors)]
-        return matched if matched else curated
-    return curated
+    page: int = 1,
+) -> CatalogPage:
+    """Unified entrypoint fetching real-time paginated books without static disk cache."""
+    if "Standard Ebooks" in source_name:
+        return fetch_standard_ebooks_page(query=query, page=page)
+    elif "Open Library" in source_name:
+        return fetch_open_library_page(query=query, subject=category, page=page)
+    else:
+        return fetch_gutenberg_page(query=query, topic=category, page=page)
 
 
 def download_catalog_book(
@@ -288,5 +316,9 @@ def download_catalog_book(
     return target_path
 
 
-# Backward compatibility alias
+# Backward compatibility aliases
+GutenbergBook = CatalogBook
+search_gutenberg = lambda q="", timeout=12.0: fetch_gutenberg_page(query=q, timeout=timeout).books
+search_open_library = lambda q="", timeout=12.0: fetch_open_library_page(query=q, timeout=timeout).books
+search_online_library = lambda src, q="", cat="": fetch_online_catalog_page(src, query=q, category=cat, page=1).books
 download_gutenberg_book = download_catalog_book
