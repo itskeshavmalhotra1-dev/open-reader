@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import threading
@@ -11,7 +12,7 @@ import wx
 
 from book_reader import APP_NAME, __version__
 from book_reader.backend.engine import BACKEND_MODE, SentenceSpan, split_sentences
-from book_reader.backend.models import BookDocument, TocNode
+from book_reader.backend.models import BookDocument, LinkSpan, TocNode
 from book_reader.backend.navigation import NavLocation, NavigationController
 from book_reader.backend.parsers import load_book
 from book_reader.backend.storage import StateStore
@@ -26,6 +27,7 @@ from book_reader.ui.dialogs import (
     BookmarksDialog,
     GoToPageDialog,
     LibraryDialog,
+    LinksDialog,
     SearchDialog,
     SettingsDialog,
 )
@@ -120,6 +122,10 @@ class BookReaderFrame(wx.Frame):
         m_next_para = nav_menu.Append(wx.ID_ANY, "Next Para&graph\tCtrl+Alt+Down")
         m_prev_para = nav_menu.Append(wx.ID_ANY, "Previous Paragraph\tCtrl+Alt+Up")
         nav_menu.AppendSeparator()
+        m_next_link = nav_menu.Append(wx.ID_ANY, "Next Lin&k\tCtrl+K")
+        m_prev_link = nav_menu.Append(wx.ID_ANY, "Previous Link\tCtrl+Shift+K")
+        m_list_links = nav_menu.Append(wx.ID_ANY, "Lin&ks List...\tAlt+K")
+        nav_menu.AppendSeparator()
         m_goto_page = nav_menu.Append(wx.ID_ANY, "&Go to Page...\tCtrl+G")
         m_where = nav_menu.Append(wx.ID_ANY, "&Where Am I?\tCtrl+I")
         self.m_single_key = nav_menu.AppendCheckItem(
@@ -163,6 +169,9 @@ class BookReaderFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda _e: self.step_heading(-1), m_prev_hd)
         self.Bind(wx.EVT_MENU, lambda _e: self.step_paragraph(1), m_next_para)
         self.Bind(wx.EVT_MENU, lambda _e: self.step_paragraph(-1), m_prev_para)
+        self.Bind(wx.EVT_MENU, lambda _e: self.step_link(1), m_next_link)
+        self.Bind(wx.EVT_MENU, lambda _e: self.step_link(-1), m_prev_link)
+        self.Bind(wx.EVT_MENU, self._on_links_list, m_list_links)
         self.Bind(wx.EVT_MENU, self._on_go_to_page, m_goto_page)
         self.Bind(wx.EVT_MENU, self._on_where_am_i, m_where)
         self.Bind(wx.EVT_MENU, self._on_toggle_single_key_nav, self.m_single_key)
@@ -200,7 +209,7 @@ class BookReaderFrame(wx.Frame):
 
         self.reader_ctrl = wx.TextCtrl(
             right_panel,
-            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.TE_NOHIDESEL,
+            style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_RICH2 | wx.TE_NOHIDESEL | wx.TE_AUTO_URL,
         )
         self.reader_ctrl.SetName("Book reading view")
         self.reader_ctrl.SetValue(
@@ -216,6 +225,7 @@ class BookReaderFrame(wx.Frame):
 
         self.toc_tree.Bind(wx.EVT_TREE_ITEM_ACTIVATED, self._on_toc_activated)
         self.reader_ctrl.Bind(wx.EVT_KEY_DOWN, self._on_reader_key_down)
+        self.reader_ctrl.Bind(wx.EVT_TEXT_URL, self._on_text_url)
         self.reader_ctrl.SetFocus()
 
     def _apply_preferences(self) -> None:
@@ -375,6 +385,17 @@ class BookReaderFrame(wx.Frame):
         display_text = f"{self.prev_marker}\n{chap.text}\n{self.next_marker}"
         self.reader_ctrl.SetValue(display_text)
 
+        if chap.links:
+            link_attr = wx.TextAttr(wx.Colour(0, 102, 204))
+            font = self.reader_ctrl.GetFont()
+            font.SetUnderlined(True)
+            link_attr.SetFont(font)
+            for lnk in chap.links:
+                s_pos = self._to_display_pos(lnk.start_offset)
+                e_pos = self._to_display_pos(lnk.end_offset)
+                if e_pos > s_pos:
+                    self.reader_ctrl.SetStyle(s_pos, e_pos, link_attr)
+
         # Adjust insertion point to account for the prefix line
         chap_pos = max(0, min(char_offset, len(chap.text)))
         display_pos = self._to_display_pos(chap_pos)
@@ -412,7 +433,7 @@ class BookReaderFrame(wx.Frame):
         """
         key = event.GetKeyCode()
 
-        # --- EasyReader Enter-to-navigate on marker lines ---
+        # --- EasyReader Enter-to-navigate on marker lines and links ---
         if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER) and self.book:
             pos = self.reader_ctrl.GetInsertionPoint()
             content = self.reader_ctrl.GetValue()
@@ -426,6 +447,10 @@ class BookReaderFrame(wx.Frame):
                 if hasattr(self, 'next_marker') and self.next_marker in line_text:
                     self.step_chapter(1)
                     return
+            link = self._find_link_at_pos(pos)
+            if link is not None:
+                self._activate_link(link)
+                return
 
         # --- Single-key navigation mode ---
         if not self.single_key_nav or event.ControlDown() or event.AltDown():
@@ -440,6 +465,8 @@ class BookReaderFrame(wx.Frame):
             self.step_heading(delta, level=key - ord("0"))
         elif key == ord("P"):
             self.step_paragraph(delta)
+        elif key == ord("K"):
+            self.step_link(delta)
         elif key == ord("G"):
             self._on_go_to_page(event)
         elif key == ord("I"):
@@ -499,6 +526,111 @@ class BookReaderFrame(wx.Frame):
             record_history=False,
             announce_text=f"Heading level {heading.level}: {heading.title}",
         )
+
+    def _find_link_at_pos(self, display_pos: int) -> LinkSpan | None:
+        if not self.book:
+            return None
+        chap = self.book.chapters[self.current_chapter_idx]
+        chap_pos = self._to_chapter_pos(display_pos)
+        for lnk in chap.links:
+            if lnk.start_offset <= chap_pos <= lnk.end_offset:
+                return lnk
+        # Fallback: check raw URL on the current line around display_pos
+        content = self.reader_ctrl.GetValue()
+        line_start = content.rfind("\n", 0, display_pos) + 1
+        line_end = content.find("\n", display_pos)
+        if line_end < 0:
+            line_end = len(content)
+        line = content[line_start:line_end]
+        rel = display_pos - line_start
+        for m in re.finditer(r"(?:https?://|mailto:)[^\s<>\"'\)\]]+", line):
+            url = m.group(0).rstrip(".,;:!?")
+            if m.start() <= rel <= m.start() + len(url):
+                return LinkSpan(
+                    text=url,
+                    href=url,
+                    start_offset=max(0, self._to_chapter_pos(line_start + m.start())),
+                    end_offset=max(0, self._to_chapter_pos(line_start + m.start() + len(url))),
+                )
+        return None
+
+    def _activate_link(self, link: LinkSpan) -> None:
+        if link.target_chapter is not None:
+            self.jump_to_location(
+                NavLocation(link.target_chapter, link.target_offset or 0),
+                record_history=True,
+                announce_text=f"Followed link to {link.text}",
+            )
+            return
+        if link.href.lower().startswith(("http://", "https://", "mailto:")):
+            webbrowser.open(link.href)
+            self.SetStatusText(f"Opened link: {link.href}")
+            self.announcer.say(f"Opening link {link.text}", interrupt=True)
+        else:
+            self.announcer.say(f"Unresolved internal link: {link.href}", interrupt=True)
+
+    def _on_text_url(self, event: wx.TextUrlEvent) -> None:
+        if event.GetMouseEvent().LeftUp():
+            start = event.GetURLStart()
+            end = event.GetURLEnd()
+            url = self.reader_ctrl.GetRange(start, end).strip()
+            if url.lower().startswith(("http://", "https://", "mailto:")):
+                webbrowser.open(url)
+                self.SetStatusText(f"Opened link: {url}")
+                self.announcer.say("Opening link in browser", interrupt=True)
+        event.Skip()
+
+    def step_link(self, delta: int) -> None:
+        if not self.book:
+            return
+        chap = self.book.chapters[self.current_chapter_idx]
+        if not chap.links:
+            self.announcer.say("No links in this section", interrupt=True)
+            return
+        chap_pos = self._to_chapter_pos(self.reader_ctrl.GetInsertionPoint())
+        chosen: LinkSpan | None = None
+        if delta > 0:
+            for lnk in chap.links:
+                if lnk.start_offset > chap_pos:
+                    chosen = lnk
+                    break
+        else:
+            for lnk in reversed(chap.links):
+                if lnk.start_offset < chap_pos:
+                    chosen = lnk
+                    break
+        if chosen is None:
+            self.announcer.say("No more links in this section", interrupt=True)
+            return
+        disp = self._to_display_pos(chosen.start_offset)
+        self.reader_ctrl.SetInsertionPoint(disp)
+        self.reader_ctrl.ShowPosition(disp)
+        self.reader_ctrl.SetFocus()
+        kind = "internal link" if chosen.target_chapter is not None else "link"
+        self.SetStatusText(f"Link: {chosen.text} ({chosen.href})")
+        self.announcer.say(f"{kind}: {chosen.text}", interrupt=True)
+
+    def _on_links_list(self, _event: wx.Event) -> None:
+        if not self.book:
+            return
+        chap = self.book.chapters[self.current_chapter_idx]
+        if not chap.links:
+            wx.MessageBox("No links found in this section.", "Links", wx.OK | wx.ICON_INFORMATION, self)
+            return
+        dlg = LinksDialog(self, chap.links)
+        try:
+            if dlg.ShowModal() == wx.ID_OK and 0 <= dlg.selected_index < len(chap.links):
+                chosen = chap.links[dlg.selected_index]
+                if dlg.action == "jump":
+                    disp = self._to_display_pos(chosen.start_offset)
+                    self.reader_ctrl.SetInsertionPoint(disp)
+                    self.reader_ctrl.ShowPosition(disp)
+                    self.reader_ctrl.SetFocus()
+                    self.announcer.say(f"Link: {chosen.text}", interrupt=True)
+                else:
+                    self._activate_link(chosen)
+        finally:
+            dlg.Destroy()
 
     def step_paragraph(self, delta: int) -> None:
         if not self.book:

@@ -32,6 +32,18 @@ class TocNode:
 
 
 @dataclass(slots=True)
+class LinkSpan:
+    """Represents a clickable/navigable hyperlink inside a chapter."""
+
+    text: str
+    href: str
+    start_offset: int
+    end_offset: int
+    target_chapter: int | None = None
+    target_offset: int | None = None
+
+
+@dataclass(slots=True)
 class Chapter:
     """Normalized chapter content ready for reading and navigation."""
 
@@ -39,6 +51,7 @@ class Chapter:
     title: str
     text: str
     headings: list[Heading] = field(default_factory=list)
+    links: list[LinkSpan] = field(default_factory=list)
 
 
 @dataclass(slots=True)

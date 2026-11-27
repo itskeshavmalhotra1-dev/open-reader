@@ -1193,3 +1193,56 @@ class KokoroVoiceManagerDialog(wx.Dialog):
         if self._cancel_event:
             self._cancel_event.set()
         event.Skip()
+
+
+class LinksDialog(wx.Dialog):
+    """Accessible dialog listing links in the current chapter."""
+
+    def __init__(self, parent: wx.Window, links: list) -> None:
+        super().__init__(parent, title="Links in Section", size=(560, 380))
+        self.links = links
+        self.action: str | None = None
+        self.selected_index: int = -1
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        lbl = wx.StaticText(
+            self,
+            label=f"Links ({len(links)}). Press Enter to open/follow, or choose Jump to Link:",
+        )
+        sizer.Add(lbl, 0, wx.ALL, 8)
+
+        items = []
+        for lnk in links:
+            kind = "Internal" if getattr(lnk, "target_chapter", None) is not None else "External"
+            items.append(f"{lnk.text} [{kind}] — {lnk.href}")
+
+        self.listbox = wx.ListBox(self, choices=items)
+        self.listbox.SetName("Links list")
+        if items:
+            self.listbox.SetSelection(0)
+        sizer.Add(self.listbox, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+
+        btn_row = wx.BoxSizer(wx.HORIZONTAL)
+        open_btn = wx.Button(self, wx.ID_OK, "&Open / Follow Link")
+        jump_btn = wx.Button(self, wx.ID_ANY, "&Jump to Link in Text")
+        close_btn = wx.Button(self, wx.ID_CANCEL, "&Close")
+        open_btn.SetDefault()
+        btn_row.Add(open_btn, 0, wx.RIGHT, 6)
+        btn_row.Add(jump_btn, 0, wx.RIGHT, 6)
+        btn_row.Add(close_btn, 0)
+        sizer.Add(btn_row, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
+
+        self.SetSizer(sizer)
+        self.listbox.SetFocus()
+
+        open_btn.Bind(wx.EVT_BUTTON, lambda _e: self._finish("open"))
+        jump_btn.Bind(wx.EVT_BUTTON, lambda _e: self._finish("jump"))
+        self.listbox.Bind(wx.EVT_LISTBOX_DCLICK, lambda _e: self._finish("open"))
+
+    def _finish(self, action: str) -> None:
+        sel = self.listbox.GetSelection()
+        if sel == wx.NOT_FOUND:
+            return
+        self.action = action
+        self.selected_index = sel
+        self.EndModal(wx.ID_OK)

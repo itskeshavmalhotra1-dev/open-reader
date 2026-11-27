@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path, PurePosixPath
 import posixpath
+import re
 import urllib.parse
 import xml.etree.ElementTree as ET
 import zipfile
 
+from bs4 import BeautifulSoup
 import fitz  # PyMuPDF
 
 from book_reader.backend.engine import extract_html_document
-from book_reader.backend.models import BookDocument, Chapter, Heading, PageBreak, TocNode
+from book_reader.backend.models import BookDocument, Chapter, Heading, LinkSpan, PageBreak, TocNode
+
+_RAW_URL_RE = re.compile(r"(?:https?://|mailto:)[^\s<>\"'\)\]]+")
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 
 SUPPORTED_EXTENSIONS = (
     ".epub",
@@ -73,6 +78,61 @@ def _fallback_toc_from_chapters(chapters: list[Chapter]) -> list[TocNode]:
     return nodes
 
 
+def _extract_raw_urls(
+    text: str,
+    existing_links: list[LinkSpan] | None = None,
+) -> list[LinkSpan]:
+    """Extract raw http(s)/mailto URLs not already covered by existing_links."""
+    occupied = [(lnk.start_offset, lnk.end_offset) for lnk in (existing_links or ())]
+    found: list[LinkSpan] = []
+    for m in _RAW_URL_RE.finditer(text):
+        start, end = m.span()
+        raw = m.group(0).rstrip(".,;:!?")
+        end = start + len(raw)
+        if end <= start:
+            continue
+        if any(not (end <= s or start >= e) for s, e in occupied):
+            continue
+        found.append(LinkSpan(text=raw, href=raw, start_offset=start, end_offset=end))
+    return found
+
+
+def _extract_markdown_links(text: str) -> list[LinkSpan]:
+    """Extract Markdown [label](url) links and any standalone raw URLs."""
+    links: list[LinkSpan] = []
+    for m in _MD_LINK_RE.finditer(text):
+        label = m.group(1).strip() or m.group(2)
+        href = m.group(2).strip()
+        start, end = m.span()
+        links.append(LinkSpan(text=label, href=href, start_offset=start, end_offset=end))
+    links.extend(_extract_raw_urls(text, links))
+    links.sort(key=lambda lnk: lnk.start_offset)
+    return links
+
+
+def _extract_html_links(raw_html: str, chapter_text: str) -> list[LinkSpan]:
+    """Extract <a href> links from HTML and map them onto chapter_text offsets."""
+    soup = BeautifulSoup(raw_html, "html.parser")
+    links: list[LinkSpan] = []
+    cursor = 0
+    for a_tag in soup.find_all("a", href=True):
+        href = str(a_tag.get("href", "")).strip()
+        label = " ".join(a_tag.get_text(" ", strip=True).split())
+        if not href or not label:
+            continue
+        idx = chapter_text.find(label, cursor)
+        if idx < 0:
+            idx = chapter_text.find(label)
+        if idx < 0:
+            continue
+        end = idx + len(label)
+        cursor = end
+        links.append(LinkSpan(text=label, href=href, start_offset=idx, end_offset=end))
+    links.extend(_extract_raw_urls(chapter_text, links))
+    links.sort(key=lambda lnk: lnk.start_offset)
+    return links
+
+
 def _parse_txt(path: Path) -> BookDocument:
     content = _read_text_with_fallback(path.read_bytes()).replace("\r\n", "\n")
     headings: list[Heading] = []
@@ -87,8 +147,11 @@ def _parse_txt(path: Path) -> BookDocument:
                     if title:
                         headings.append(Heading(hashes, title, offset))
             offset += len(line) + 1
+        links = _extract_markdown_links(content)
+    else:
+        links = _extract_raw_urls(content)
 
-    chapter = Chapter(index=0, title=path.stem, text=content, headings=headings)
+    chapter = Chapter(index=0, title=path.stem, text=content, headings=headings, links=links)
     return BookDocument(
         title=path.stem,
         author="Unknown",
@@ -104,8 +167,15 @@ def _parse_html_file(path: Path) -> BookDocument:
     res = extract_html_document(raw_html)
     headings = [Heading(h.level, h.text, h.char_offset) for h in res.headings]
     page_breaks = [PageBreak(pb.label, 0, pb.char_offset) for pb in res.page_breaks]
+    links = _extract_html_links(raw_html, res.text)
+    for lnk in links:
+        if lnk.href.startswith("#"):
+            frag = lnk.href[1:]
+            if frag in res.anchors:
+                lnk.target_chapter = 0
+                lnk.target_offset = res.anchors[frag]
     title = headings[0].title if headings else path.stem
-    chapter = Chapter(index=0, title=title, text=res.text, headings=headings)
+    chapter = Chapter(index=0, title=title, text=res.text, headings=headings, links=links)
     return BookDocument(
         title=title,
         author="Unknown",
@@ -152,7 +222,13 @@ def _parse_docx(path: Path) -> BookDocument:
 
     full_text = "\n\n".join(paragraphs)
     title = headings[0].title if headings else path.stem
-    chapter = Chapter(index=0, title=title, text=full_text, headings=headings)
+    chapter = Chapter(
+        index=0,
+        title=title,
+        text=full_text,
+        headings=headings,
+        links=_extract_raw_urls(full_text),
+    )
     return BookDocument(
         title=title,
         author="Unknown",
@@ -205,12 +281,14 @@ def _parse_pdf(path: Path) -> BookDocument:
                     if doc.page_count > chunk_size
                     else title
                 )
+                chap_text = "\n\n".join(parts)
                 chapters.append(
                     Chapter(
                         index=chunk_idx,
                         title=chap_title,
-                        text="\n\n".join(parts),
+                        text=chap_text,
                         headings=headings,
+                        links=_extract_raw_urls(chap_text),
                     )
                 )
 
@@ -448,17 +526,28 @@ def _parse_opf_from_reader(
         chap_idx = len(chapters)
         headings = [Heading(h.level, h.text, h.char_offset) for h in res.headings]
         chap_title = headings[0].title if headings else f"Section {chap_idx + 1}"
+        links = _extract_html_links(raw_html, res.text)
         chapters.append(
             Chapter(
                 index=chap_idx,
                 title=chap_title,
                 text=res.text,
                 headings=headings,
+                links=links,
             )
         )
         href_map[href_path] = (chap_idx, dict(res.anchors))
         for pb in res.page_breaks:
             inline_page_breaks.append(PageBreak(pb.label, chap_idx, pb.char_offset))
+
+    # Resolve internal EPUB/DAISY links once href_map is complete
+    chapter_dirs = [posixpath.dirname(hp) for hp in href_map]
+    for chap, base_dir in zip(chapters, chapter_dirs):
+        for lnk in chap.links:
+            if not lnk.href.lower().startswith(("http://", "https://", "mailto:")):
+                resolved = _resolve_target(base_dir, lnk.href, href_map)
+                if resolved is not None:
+                    lnk.target_chapter, lnk.target_offset = resolved
 
     if not chapters:
         chapters.append(Chapter(index=0, title=title, text="[No readable text chapters found]"))
