@@ -251,6 +251,41 @@ def test_online_libraries_dialog_status_and_info(tmp_path: Path) -> None:
             info_ox = dlg.lib_info_ctrl.GetValue()
             assert "OpenStax" in info_ox
             assert dlg.cat_choice.IsEnabled()
+        # Switch to Indian Literature
+        idx_in = dlg.lib_choice.FindString("Indian Literature Archive (भारतीय साहित्य)")
+        if idx_in != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_in)
+            dlg._on_lib_changed(None)
+            info_in = dlg.lib_info_ctrl.GetValue()
+            assert "Indian Literature" in info_in
+            assert dlg.cat_choice.IsEnabled()
+
+        # Switch to Open Tech
+        idx_tech = dlg.lib_choice.FindString("Open Tech & CS Books (Programming)")
+        if idx_tech != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_tech)
+            dlg._on_lib_changed(None)
+            info_tech = dlg.lib_info_ctrl.GetValue()
+            assert "Tech" in info_tech
+            assert dlg.cat_choice.IsEnabled()
+
+        # Switch to NCBI Bookshelf
+        idx_ncbi = dlg.lib_choice.FindString("NCBI Bookshelf (Medical & Health)")
+        if idx_ncbi != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_ncbi)
+            dlg._on_lib_changed(None)
+            info_ncbi = dlg.lib_info_ctrl.GetValue()
+            assert "NCBI" in info_ncbi
+            assert dlg.cat_choice.IsEnabled()
+
+        # Switch to 20th Century Classics
+        idx_20 = dlg.lib_choice.FindString("20th Century Classics (Orwell, Woolf)")
+        if idx_20 != wx.NOT_FOUND:
+            dlg.lib_choice.SetSelection(idx_20)
+            dlg._on_lib_changed(None)
+            info_20 = dlg.lib_info_ctrl.GetValue()
+            assert "20th Century" in info_20
+            assert dlg.cat_choice.IsEnabled()
     finally:
         dlg.Destroy()
         app.ProcessPendingEvents()
@@ -339,4 +374,145 @@ def test_download_wikisource_html_mock(tmp_path: Path) -> None:
         assert out_file.suffix == ".html"
         content = out_file.read_text(encoding="utf-8")
         assert "Chapter one text of Godan" in content
+
+
+def test_fetch_indian_archive_page_mock() -> None:
+    from book_reader.backend.gutenberg import fetch_indian_archive_page
+
+    sample_search = {
+        "response": {
+            "numFound": 100,
+            "docs": [
+                {
+                    "identifier": "godan_hindi_01",
+                    "title": "Godan",
+                    "creator": ["Munshi Premchand"],
+                    "language": ["hin"],
+                }
+            ],
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_search).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        page = fetch_indian_archive_page(query="godan", category="Hindi (हिन्दी)", page=1)
+        assert len(page.books) == 1
+        assert page.total_count == 100
+        assert page.books[0].title == "Godan"
+        assert "Indian Literature" in page.books[0].source
+        assert "godan_hindi_01.epub" in (page.books[0].epub_url or "")
+
+
+def test_fetch_open_tech_page_mock() -> None:
+    from book_reader.backend.gutenberg import fetch_open_tech_page
+
+    sample_search = {
+        "response": {
+            "numFound": 50,
+            "docs": [
+                {
+                    "identifier": "python_algorithms_01",
+                    "title": "Python Algorithms and Data Structures",
+                    "creator": ["Tech Expert"],
+                }
+            ],
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_search).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        page = fetch_open_tech_page(query="python", category="Python & Data Science", page=1)
+        assert len(page.books) == 1
+        assert page.total_count == 50
+        assert page.books[0].title == "Python Algorithms and Data Structures"
+        assert "python_algorithms_01.pdf" in (page.books[0].pdf_url or "")
+
+
+def test_fetch_ncbi_page_mock() -> None:
+    from book_reader.backend.gutenberg import fetch_ncbi_page
+
+    search_json = {
+        "esearchresult": {
+            "count": "10",
+            "idlist": ["12345"],
+        }
+    }
+    summary_json = {
+        "result": {
+            "12345": {
+                "title": "Clinical Pharmacology Principles",
+                "authors": [{"name": "Dr. Smith"}],
+            }
+        }
+    }
+
+    mock_search = MagicMock()
+    mock_search.read.return_value = json.dumps(search_json).encode("utf-8")
+    mock_search.__enter__.return_value = mock_search
+
+    mock_sum = MagicMock()
+    mock_sum.read.return_value = json.dumps(summary_json).encode("utf-8")
+    mock_sum.__enter__.return_value = mock_sum
+
+    with patch("book_reader.backend.gutenberg.urlopen", side_effect=[mock_search, mock_sum]):
+        page = fetch_ncbi_page(query="pharmacology", category="Clinical Medicine & Pharmacology", page=1)
+        assert len(page.books) == 1
+        assert page.total_count == 10
+        assert page.books[0].title == "Clinical Pharmacology Principles"
+        assert "ncbi.nlm.nih.gov" in (page.books[0].html_url or "")
+
+
+def test_fetch_classics_20th_page_mock() -> None:
+    from book_reader.backend.gutenberg import fetch_classics_20th_page
+
+    sample_search = {
+        "response": {
+            "numFound": 12,
+            "docs": [
+                {
+                    "identifier": "nineteen_eighty_four_orwell",
+                    "title": "Nineteen Eighty-Four",
+                    "creator": ["George Orwell"],
+                }
+            ],
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_search).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        page = fetch_classics_20th_page(query="1984", category="George Orwell (1984, Animal Farm)", page=1)
+        assert len(page.books) == 1
+        assert page.total_count == 12
+        assert page.books[0].title == "Nineteen Eighty-Four"
+        assert page.books[0].source == "20th Century Classics"
+
+
+def test_download_ncbi_printable_html_mock(tmp_path: Path) -> None:
+    from book_reader.backend.gutenberg import CatalogBook, download_catalog_book
+
+    book = CatalogBook(
+        id="ncbi_12345",
+        title="Clinical Pharmacology",
+        authors=["Dr. Smith"],
+        languages=["en"],
+        formats={"text/html": "https://www.ncbi.nlm.nih.gov/books/NBK12345/?report=printable"},
+        download_count=100,
+        source="NCBI Bookshelf",
+    )
+    printable_html = b"<html><head><title>Printable</title></head><body>Medical text content</body></html>"
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = printable_html
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        out_file = download_catalog_book(book, tmp_path)
+        assert out_file.exists()
+        assert out_file.suffix == ".html"
+        assert "Medical text content" in out_file.read_text(encoding="utf-8")
 

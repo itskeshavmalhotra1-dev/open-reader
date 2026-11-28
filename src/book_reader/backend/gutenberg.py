@@ -113,6 +113,46 @@ OPENSTAX_CATEGORIES = [
     "Computer Science & Engineering",
 ]
 
+INDIAN_ARCHIVE_CATEGORIES = [
+    "Hindi (हिन्दी)",
+    "Urdu (اردو)",
+    "Sanskrit (संस्कृतम्)",
+    "Bengali (বাংলা)",
+    "Tamil (தமிழ்)",
+    "Punjabi (ਪੰਜਾਬੀ)",
+    "Marathi (मराठी)",
+    "All Indian Languages",
+]
+
+OPEN_TECH_CATEGORIES = [
+    "All Tech & Programming",
+    "Python & Data Science",
+    "Algorithms & Computer Science",
+    "Artificial Intelligence & Machine Learning",
+    "Linux & Systems Programming",
+    "Cybersecurity & Networking",
+    "Web Development & Databases",
+]
+
+NCBI_CATEGORIES = [
+    "All Health & Medicine",
+    "Clinical Medicine & Pharmacology",
+    "Biology & Genetics",
+    "Anatomy & Physiology",
+    "Public Health & Epidemiology",
+    "Neuroscience & Mental Health",
+]
+
+CLASSICS_20TH_CATEGORIES = [
+    "All 20th Century Classics",
+    "George Orwell (1984, Animal Farm)",
+    "Virginia Woolf (Mrs Dalloway)",
+    "H. G. Wells (Sci-Fi Classics)",
+    "Jack London (Adventure)",
+    "F. Scott Fitzgerald (Great Gatsby)",
+    "Franz Kafka (Metamorphosis)",
+]
+
 
 def fetch_gutenberg_page(
     query: str = "",
@@ -438,6 +478,345 @@ def fetch_openstax_page(
     )
 
 
+def fetch_indian_archive_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch books from Internet Archive's massive 16+ Lakh Indian & Regional Languages collection."""
+    cat_low = category.lower()
+    if "urdu" in cat_low or "اردو" in category:
+        lang_filter = "(language:urdu OR language:urd)"
+        lang_code = "ur"
+        lang_name = "Urdu"
+    elif "sanskrit" in cat_low or "संस्कृत" in category:
+        lang_filter = "(language:sanskrit OR language:san)"
+        lang_code = "sa"
+        lang_name = "Sanskrit"
+    elif "bengali" in cat_low or "বাংলা" in category:
+        lang_filter = "(language:bengali OR language:ben)"
+        lang_code = "bn"
+        lang_name = "Bengali"
+    elif "tamil" in cat_low or "தமிழ்" in category:
+        lang_filter = "(language:tamil OR language:tam)"
+        lang_code = "ta"
+        lang_name = "Tamil"
+    elif "punjabi" in cat_low or "ਪੰਜਾਬੀ" in category:
+        lang_filter = "(language:punjabi OR language:pan)"
+        lang_code = "pa"
+        lang_name = "Punjabi"
+    elif "marathi" in cat_low or "मराठी" in category:
+        lang_filter = "(language:marathi OR language:mar)"
+        lang_code = "mr"
+        lang_name = "Marathi"
+    elif "all" in cat_low:
+        lang_filter = "(language:hindi OR language:hin OR language:urdu OR language:urd OR language:sanskrit OR language:san)"
+        lang_code = "hi"
+        lang_name = "Indian"
+    else:
+        lang_filter = "(language:hindi OR language:hin)"
+        lang_code = "hi"
+        lang_name = "Hindi"
+
+    q_parts = [lang_filter, "mediatype:texts"]
+    if query.strip():
+        q_parts.append(f"({query.strip()})")
+
+    encoded_q = urllib.parse.quote_plus(" AND ".join(q_parts))
+    url = (
+        f"https://archive.org/advancedsearch.php?q={encoded_q}"
+        f"&fl[]=identifier,title,creator,language,year"
+        f"&rows={limit}&page={max(1, page)}&output=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    total = int(data.get("response", {}).get("numFound", 0))
+    docs = data.get("response", {}).get("docs", [])
+
+    books: list[CatalogBook] = []
+    for doc in docs:
+        ia_id = doc.get("identifier", "")
+        if not ia_id:
+            continue
+        title = doc.get("title", "Untitled")
+        authors = doc.get("creator", [])
+        if isinstance(authors, str):
+            authors = [authors]
+        formats = {
+            "application/epub+zip": f"https://archive.org/download/{ia_id}/{ia_id}.epub",
+            "application/pdf": f"https://archive.org/download/{ia_id}/{ia_id}.pdf",
+            "text/plain": f"https://archive.org/download/{ia_id}/{ia_id}_djvu.txt",
+        }
+        books.append(
+            CatalogBook(
+                id=ia_id,
+                title=title,
+                authors=authors,
+                languages=[lang_code],
+                formats=formats,
+                download_count=0,
+                source=f"Indian Literature ({lang_name})",
+            )
+        )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(page * limit) < total,
+        has_previous=page > 1,
+    )
+
+
+def fetch_open_tech_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch free open-source Computer Science, IT, and Programming textbooks."""
+    cat_low = category.lower()
+    if "python" in cat_low:
+        subj = '(subject:"python" OR subject:"data science")'
+    elif "algorithm" in cat_low:
+        subj = '(subject:"algorithms" OR subject:"computer science")'
+    elif "artificial" in cat_low or "machine" in cat_low:
+        subj = '(subject:"artificial intelligence" OR subject:"machine learning")'
+    elif "linux" in cat_low:
+        subj = '(subject:"linux" OR subject:"operating systems")'
+    elif "cyber" in cat_low or "network" in cat_low:
+        subj = '(subject:"computer security" OR subject:"networking")'
+    elif "web" in cat_low or "database" in cat_low:
+        subj = '(subject:"web development" OR subject:"database")'
+    else:
+        subj = '(subject:"computer science" OR subject:"programming" OR subject:"software")'
+
+    q_parts = [subj, "mediatype:texts"]
+    if query.strip():
+        q_parts.append(f"({query.strip()})")
+
+    encoded_q = urllib.parse.quote_plus(" AND ".join(q_parts))
+    url = (
+        f"https://archive.org/advancedsearch.php?q={encoded_q}"
+        f"&fl[]=identifier,title,creator,year"
+        f"&rows={limit}&page={max(1, page)}&output=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    total = int(data.get("response", {}).get("numFound", 0))
+    docs = data.get("response", {}).get("docs", [])
+
+    books: list[CatalogBook] = []
+    for doc in docs:
+        ia_id = doc.get("identifier", "")
+        if not ia_id:
+            continue
+        title = doc.get("title", "Untitled")
+        authors = doc.get("creator", ["Tech Authors"])
+        if isinstance(authors, str):
+            authors = [authors]
+        formats = {
+            "application/pdf": f"https://archive.org/download/{ia_id}/{ia_id}.pdf",
+            "application/epub+zip": f"https://archive.org/download/{ia_id}/{ia_id}.epub",
+            "text/plain": f"https://archive.org/download/{ia_id}/{ia_id}_djvu.txt",
+        }
+        books.append(
+            CatalogBook(
+                id=ia_id,
+                title=title,
+                authors=authors,
+                languages=["en"],
+                formats=formats,
+                download_count=1000,
+                source="Open Tech Books",
+            )
+        )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(page * limit) < total,
+        has_previous=page > 1,
+    )
+
+
+def fetch_ncbi_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch free medical, health, and life sciences reference books from NCBI Bookshelf."""
+    cat_low = category.lower()
+    if "clinical" in cat_low or "pharmacol" in cat_low:
+        default_term = "pharmacology OR therapeutics"
+    elif "genetics" in cat_low:
+        default_term = "genetics OR molecular biology"
+    elif "anatomy" in cat_low:
+        default_term = "anatomy OR physiology"
+    elif "epidemiolog" in cat_low or "public" in cat_low:
+        default_term = "public health OR epidemiology"
+    elif "neuro" in cat_low or "mental" in cat_low:
+        default_term = "neuroscience OR psychiatry"
+    else:
+        default_term = "medicine OR health"
+
+    search_term = query.strip() or default_term
+    encoded_term = urllib.parse.quote_plus(search_term)
+    retstart = max(0, (page - 1) * limit)
+
+    url_search = (
+        f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?"
+        f"db=books&term={encoded_term}&retstart={retstart}&retmax={limit}&retmode=json"
+    )
+    req = Request(
+        url_search,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    esearch = data.get("esearchresult", {})
+    total = int(esearch.get("count", 0))
+    id_list = esearch.get("idlist", [])
+
+    books: list[CatalogBook] = []
+    if id_list:
+        joined_ids = ",".join(id_list)
+        url_sum = (
+            f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?"
+            f"db=books&id={joined_ids}&retmode=json"
+        )
+        req_sum = Request(
+            url_sum,
+            headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+        )
+        with urlopen(req_sum, timeout=timeout) as resp_sum:
+            sum_data = json.loads(resp_sum.read().decode("utf-8")).get("result", {})
+
+        for bid in id_list:
+            b_info = sum_data.get(bid, {})
+            title = b_info.get("title", f"NCBI Book {bid}")
+            authors = [a.get("name", "") for a in b_info.get("authors", []) if a.get("name")] or ["NCBI Bookshelf"]
+            formats = {
+                "text/html": f"https://www.ncbi.nlm.nih.gov/books/NBK{bid}/?report=printable",
+                "application/pdf": f"https://www.ncbi.nlm.nih.gov/books/NBK{bid}/pdf/Bookshelf_NBK{bid}.pdf",
+            }
+            books.append(
+                CatalogBook(
+                    id=f"ncbi_{bid}",
+                    title=title,
+                    authors=authors,
+                    languages=["en"],
+                    formats=formats,
+                    download_count=5000,
+                    source="NCBI Bookshelf",
+                )
+            )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(retstart + limit) < total,
+        has_previous=page > 1,
+    )
+
+
+def fetch_classics_20th_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch modern 20th century classic public domain books (Orwell, Woolf, Wells, Kafka, etc.)."""
+    cat_low = category.lower()
+    if "orwell" in cat_low:
+        author_filter = 'creator:"George Orwell"'
+    elif "woolf" in cat_low:
+        author_filter = 'creator:"Virginia Woolf"'
+    elif "wells" in cat_low:
+        author_filter = 'creator:"H. G. Wells"'
+    elif "london" in cat_low:
+        author_filter = 'creator:"Jack London"'
+    elif "fitzgerald" in cat_low:
+        author_filter = 'creator:"F. Scott Fitzgerald"'
+    elif "kafka" in cat_low:
+        author_filter = 'creator:"Franz Kafka"'
+    else:
+        author_filter = '(creator:"George Orwell" OR creator:"Virginia Woolf" OR creator:"H. G. Wells" OR creator:"Jack London" OR creator:"Franz Kafka")'
+
+    q_parts = [author_filter, "mediatype:texts"]
+    if query.strip():
+        q_parts.append(f"({query.strip()})")
+
+    encoded_q = urllib.parse.quote_plus(" AND ".join(q_parts))
+    url = (
+        f"https://archive.org/advancedsearch.php?q={encoded_q}"
+        f"&fl[]=identifier,title,creator,year"
+        f"&rows={limit}&page={max(1, page)}&output=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    total = int(data.get("response", {}).get("numFound", 0))
+    docs = data.get("response", {}).get("docs", [])
+
+    books: list[CatalogBook] = []
+    for doc in docs:
+        ia_id = doc.get("identifier", "")
+        if not ia_id:
+            continue
+        title = doc.get("title", "Untitled")
+        authors = doc.get("creator", ["Classic Author"])
+        if isinstance(authors, str):
+            authors = [authors]
+        formats = {
+            "application/epub+zip": f"https://archive.org/download/{ia_id}/{ia_id}.epub",
+            "application/pdf": f"https://archive.org/download/{ia_id}/{ia_id}.pdf",
+            "text/plain": f"https://archive.org/download/{ia_id}/{ia_id}_djvu.txt",
+        }
+        books.append(
+            CatalogBook(
+                id=ia_id,
+                title=title,
+                authors=authors,
+                languages=["en"],
+                formats=formats,
+                download_count=10000,
+                source="20th Century Classics",
+            )
+        )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(page * limit) < total,
+        has_previous=page > 1,
+    )
+
+
 def fetch_online_catalog_page(
     source_name: str,
     query: str = "",
@@ -453,6 +832,14 @@ def fetch_online_catalog_page(
         return fetch_wikisource_page(query=query, category=category, page=page)
     elif "OpenStax" in source_name:
         return fetch_openstax_page(query=query, category=category, page=page)
+    elif "Indian" in source_name:
+        return fetch_indian_archive_page(query=query, category=category, page=page)
+    elif "Tech" in source_name or "Computer" in source_name:
+        return fetch_open_tech_page(query=query, category=category, page=page)
+    elif "NCBI" in source_name or "Medical" in source_name:
+        return fetch_ncbi_page(query=query, category=category, page=page)
+    elif "20th Century" in source_name or "Classics" in source_name:
+        return fetch_classics_20th_page(query=query, category=category, page=page)
     else:
         return fetch_gutenberg_page(query=query, topic=category, page=page)
 
@@ -533,6 +920,25 @@ def download_catalog_book(
                     temp_path.write_text(full_html, encoding="utf-8")
                     if progress_cb:
                         progress_cb(len(full_html), len(full_html))
+                    temp_path.replace(target_path)
+                    return target_path
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        # Handle NCBI Bookshelf printable HTML
+        if "ncbi.nlm.nih.gov" in candidate_url and "report=printable" in candidate_url:
+            try:
+                req = Request(candidate_url, headers=headers)
+                with urlopen(req, timeout=timeout) as resp:
+                    raw_html = resp.read().decode("utf-8", errors="replace")
+                    ext = ".html"
+                    filename = f"{safe_title}_{clean_id}{ext}"
+                    target_path = dest_dir / filename
+                    temp_path = dest_dir / f"{filename}.part"
+                    temp_path.write_text(raw_html, encoding="utf-8")
+                    if progress_cb:
+                        progress_cb(len(raw_html), len(raw_html))
                     temp_path.replace(target_path)
                     return target_path
             except Exception as exc:

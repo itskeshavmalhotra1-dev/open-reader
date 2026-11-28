@@ -1289,6 +1289,10 @@ class OnlineLibrariesDialog(wx.Dialog):
         "Open Library / Internet Archive",
         "Wikisource (Hindi, Urdu, English)",
         "OpenStax (Academic Textbooks)",
+        "Indian Literature Archive (भारतीय साहित्य)",
+        "Open Tech & CS Books (Programming)",
+        "NCBI Bookshelf (Medical & Health)",
+        "20th Century Classics (Orwell, Woolf)",
     ]
 
     LIBRARY_INFO = {
@@ -1321,6 +1325,30 @@ class OnlineLibrariesDialog(wx.Dialog):
             "formats": "PDF",
             "description": "Rice University's open textbook library. College-level textbooks for Calculus, Physics, Biology, Chemistry, Anatomy, Economics, History, and Computing.",
             "access": "100% Free Open Educational Resources (OER), peer-reviewed.",
+        },
+        "Indian Literature Archive (भारतीय साहित्य)": {
+            "status": "Online • 16+ Lakh Books in Indian Languages",
+            "formats": "EPUB, PDF, Plain Text",
+            "description": "Massive collection of Hindi, Urdu, Sanskrit, Bengali, Tamil, Marathi, and Punjabi classic literature, religious scriptures, history, and poetry.",
+            "access": "100% Free public domain archive, no account required.",
+        },
+        "Open Tech & CS Books (Programming)": {
+            "status": "Online • 40,000+ Free Computer Science & IT Textbooks",
+            "formats": "PDF, EPUB, Plain Text",
+            "description": "Free open-source textbooks on Python, C++, Data Science, Machine Learning, Algorithms, Linux, Cybersecurity, Web Development, and Databases.",
+            "access": "100% Free open-access educational texts.",
+        },
+        "NCBI Bookshelf (Medical & Health)": {
+            "status": "Online • National Library of Medicine Bookshelf",
+            "formats": "HTML, PDF",
+            "description": "Authoritative biomedical, clinical medicine, pharmacology, genetics, anatomy, epidemiology, and public health reference textbooks and clinical guides.",
+            "access": "100% Free NIH / NLM open biomedical reference library.",
+        },
+        "20th Century Classics (Orwell, Woolf)": {
+            "status": "Online • Modern Public Domain Classics",
+            "formats": "EPUB, PDF, Plain Text",
+            "description": "Celebrated 20th century classic works: George Orwell (1984, Animal Farm), Virginia Woolf, H. G. Wells, Jack London, F. Scott Fitzgerald, and Franz Kafka.",
+            "access": "100% Free public domain literature.",
         },
     }
 
@@ -1477,7 +1505,11 @@ class OnlineLibrariesDialog(wx.Dialog):
     def _on_lib_changed(self, _event: wx.Event) -> None:
         lib_name = self.lib_choice.GetStringSelection()
         from book_reader.backend.gutenberg import (
+            CLASSICS_20TH_CATEGORIES,
             GUTENBERG_CATEGORIES,
+            INDIAN_ARCHIVE_CATEGORIES,
+            NCBI_CATEGORIES,
+            OPEN_TECH_CATEGORIES,
             OPENSTAX_CATEGORIES,
             WIKISOURCE_CATEGORIES,
         )
@@ -1492,6 +1524,22 @@ class OnlineLibrariesDialog(wx.Dialog):
             self.cat_choice.Enable(True)
         elif "OpenStax" in lib_name:
             self.cat_choice.Append(OPENSTAX_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "Indian Literature" in lib_name:
+            self.cat_choice.Append(INDIAN_ARCHIVE_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "Tech" in lib_name:
+            self.cat_choice.Append(OPEN_TECH_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "NCBI" in lib_name:
+            self.cat_choice.Append(NCBI_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "20th Century" in lib_name:
+            self.cat_choice.Append(CLASSICS_20TH_CATEGORIES)
             self.cat_choice.SetSelection(0)
             self.cat_choice.Enable(True)
         else:
