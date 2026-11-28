@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import urllib.parse
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
@@ -327,6 +328,12 @@ def fetch_open_library_page(
 
     results: list[CatalogBook] = []
     for doc in data.get("docs", []):
+        ebook_access = doc.get("ebook_access", "")
+        # Filter out borrow-only or print-disabled items that require login checkout
+        if ebook_access in ("borrowable", "printdisabled", "no_ebook"):
+            if not doc.get("public_scan_b"):
+                continue
+
         title = doc.get("title", "Untitled")
         authors = doc.get("author_name", [])
         languages = doc.get("language", ["en"])
@@ -335,6 +342,7 @@ def fetch_open_library_page(
         if ia_ids:
             primary_ia = ia_ids[0]
             formats["application/epub+zip"] = f"https://archive.org/download/{primary_ia}/{primary_ia}.epub"
+            formats["application/pdf"] = f"https://archive.org/download/{primary_ia}/{primary_ia}.pdf"
             formats["text/plain"] = f"https://archive.org/download/{primary_ia}/{primary_ia}_djvu.txt"
 
         if formats:
@@ -546,7 +554,7 @@ def fetch_indian_archive_page(
         lang_code = "hi"
         lang_name = "Hindi"
 
-    q_parts = [lang_filter, "mediatype:texts"]
+    q_parts = [lang_filter, "mediatype:texts", "-collection:inlibrary", "-access-restricted-item:true"]
     if query.strip():
         q_parts.append(f"({query.strip()})")
 
@@ -788,7 +796,7 @@ def fetch_classics_20th_page(
     else:
         author_filter = '(creator:"George Orwell" OR creator:"Virginia Woolf" OR creator:"H. G. Wells" OR creator:"Jack London" OR creator:"Franz Kafka")'
 
-    q_parts = [author_filter, "mediatype:texts"]
+    q_parts = [author_filter, "mediatype:texts", "-collection:inlibrary", "-access-restricted-item:true"]
     if query.strip():
         q_parts.append(f"({query.strip()})")
 
@@ -870,6 +878,51 @@ def fetch_online_catalog_page(
         return fetch_gutenberg_page(query=query, topic=category, page=page)
 
 
+def resolve_archive_org_candidates(ia_id: str, preferred_format: str = "", timeout: float = 6.0) -> list[str]:
+    """Query Internet Archive metadata API to discover exact available downloadable files for an item."""
+    meta_url = f"https://archive.org/metadata/{urllib.parse.quote(ia_id)}/files"
+    req = Request(
+        meta_url,
+        headers={"User-Agent": "OpenReader/26.0 (Accessibility desktop reader)"},
+    )
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            files = data.get("result", [])
+    except Exception:
+        return []
+
+    epubs: list[str] = []
+    pdfs: list[str] = []
+    txts: list[str] = []
+    htmls: list[str] = []
+
+    for f in files:
+        name = f.get("name", "")
+        if not name or name.endswith(("_meta.xml", "_files.xml", "_archive.torrent", "_thumb.jpg")):
+            continue
+        low = name.lower()
+        full_url = f"https://archive.org/download/{ia_id}/{name}"
+        if low.endswith(".epub"):
+            epubs.append(full_url)
+        elif low.endswith(".pdf"):
+            pdfs.append(full_url)
+        elif low.endswith(("_djvu.txt", ".txt")):
+            txts.append(full_url)
+        elif low.endswith((".html", ".htm")) and not low.endswith(("_hocr.html", "_chocr.html")):
+            htmls.append(full_url)
+
+    pref = preferred_format.upper().strip()
+    if "PDF" in pref:
+        return pdfs + epubs + txts + htmls
+    elif "TXT" in pref or "TEXT" in pref or "PLAIN" in pref:
+        return txts + epubs + pdfs + htmls
+    elif "HTML" in pref:
+        return htmls + epubs + pdfs + txts
+    else:
+        return epubs + pdfs + txts + htmls
+
+
 def download_catalog_book(
     book: CatalogBook,
     dest_dir: Path,
@@ -940,6 +993,19 @@ def download_catalog_book(
 
     if not candidates:
         raise ValueError(f"No suitable download format found for '{book.title}'")
+
+    # For Internet Archive items, resolve exact available filenames via metadata API
+    ia_match = None
+    for cand in list(candidates):
+        m = re.search(r"archive\.org/download/([^/]+)", cand)
+        if m:
+            ia_match = m.group(1)
+            break
+
+    if ia_match:
+        resolved = resolve_archive_org_candidates(ia_match, preferred_format=pref, timeout=min(6.0, timeout))
+        if resolved:
+            candidates = resolved + [c for c in candidates if c not in resolved]
 
     safe_title = re.sub(r'[\\/*?:"<>|]', "_", book.title)[:60].strip() or "book"
     clean_id = re.sub(r'[\\/*?:"<>|]', "_", str(book.id))[:30].strip() or "item"
@@ -1046,6 +1112,23 @@ def download_catalog_book(
             if downloaded > 0 and temp_path.exists():
                 temp_path.replace(target_path)
                 return target_path
+        except HTTPError as exc:
+            if exc.code == 401:
+                last_error = PermissionError(
+                    f"HTTP Error 401: Unauthorized — '{book.title}' is a restricted lending-library item on Internet Archive requiring account checkout."
+                )
+            elif exc.code == 403:
+                last_error = PermissionError(
+                    f"HTTP Error 403: Forbidden — '{book.title}' access is restricted on the server."
+                )
+            else:
+                last_error = exc
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except OSError:
+                    pass
+            continue
         except Exception as exc:
             last_error = exc
             if temp_path.exists():

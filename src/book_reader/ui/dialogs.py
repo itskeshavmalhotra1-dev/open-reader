@@ -1780,7 +1780,15 @@ class OnlineLibrariesDialog(wx.Dialog):
 
     def _download_failed(self, progress: wx.ProgressDialog, error: str) -> None:
         progress.Destroy()
-        wx.MessageBox(f"Failed to download book:\n{error}", "Download Error", wx.OK | wx.ICON_ERROR, self)
+        if "401" in error or "Unauthorized" in error or "lending-library" in error:
+            msg = (
+                f"Failed to download '{self.results_list.GetStringSelection()}':\n\n"
+                "This book is a restricted lending-library title on Internet Archive that cannot be downloaded without logging in (HTTP Error 401: Unauthorized).\n\n"
+                "Please select an open public domain book, or try Project Gutenberg or Standard Ebooks."
+            )
+        else:
+            msg = f"Failed to download book:\n{error}"
+        wx.MessageBox(msg, "Download Error", wx.OK | wx.ICON_ERROR, self)
 
 
 # Backward compatibility alias

@@ -637,3 +637,93 @@ def test_online_libraries_dialog_format_selector(tmp_path: Path) -> None:
         dlg.Destroy()
 
 
+def test_fetch_open_library_filters_borrowable_without_public_scan() -> None:
+    from book_reader.backend.gutenberg import fetch_open_library_page
+
+    sample_json = {
+        "numFound": 3,
+        "docs": [
+            {
+                "key": "/works/OL1",
+                "title": "Public Scan Book",
+                "author_name": ["Author"],
+                "ia": ["public_scan_01"],
+                "ebook_access": "public",
+                "public_scan_b": True,
+            },
+            {
+                "key": "/works/OL2",
+                "title": "Borrow Only Book",
+                "author_name": ["Author"],
+                "ia": ["borrow_only_02"],
+                "ebook_access": "borrowable",
+                "public_scan_b": False,
+            },
+            {
+                "key": "/works/OL3",
+                "title": "Print Disabled Book",
+                "author_name": ["Author"],
+                "ia": ["print_disabled_03"],
+                "ebook_access": "printdisabled",
+                "public_scan_b": False,
+            },
+        ],
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_json).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        page = fetch_open_library_page("Test Query")
+        # Only the public scan book should be included
+        assert len(page.books) == 1
+        assert page.books[0].title == "Public Scan Book"
+
+
+def test_resolve_archive_org_candidates_mock() -> None:
+    from book_reader.backend.gutenberg import resolve_archive_org_candidates
+
+    metadata_json = {
+        "result": [
+            {"name": "1984.epub"},
+            {"name": "1984.pdf"},
+            {"name": "1984_djvu.txt"},
+            {"name": "1984_meta.xml"},
+        ]
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(metadata_json).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        cands = resolve_archive_org_candidates("nineteen_eighty-four", preferred_format="EPUB")
+        assert len(cands) == 3
+        assert "1984.epub" in cands[0]
+        assert not any("_meta.xml" in c for c in cands)
+
+
+def test_download_catalog_book_handles_401_gracefully(tmp_path: Path) -> None:
+    from urllib.error import HTTPError
+    from book_reader.backend.gutenberg import CatalogBook, download_catalog_book
+
+    book = CatalogBook(
+        id="restricted_book",
+        title="Restricted Title",
+        authors=["Author"],
+        languages=["en"],
+        formats={"application/epub+zip": "https://archive.org/download/restricted/restricted.epub"},
+        source="Open Library / Internet Archive",
+    )
+
+    def side_effect(req, *args, **kwargs):
+        raise HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+    with patch("book_reader.backend.gutenberg.urlopen", side_effect=side_effect):
+        import pytest
+        with pytest.raises(PermissionError) as exc_info:
+            download_catalog_book(book, tmp_path)
+        assert "401" in str(exc_info.value)
+        assert "restricted lending-library" in str(exc_info.value)
+
+
+
