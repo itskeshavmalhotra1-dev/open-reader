@@ -73,6 +73,32 @@ class CatalogBook:
                 return v
         return None
 
+    @property
+    def available_formats(self) -> list[str]:
+        """Return human-readable format names available for this book (e.g. EPUB, PDF, HTML, Plain Text)."""
+        fmts: list[str] = []
+        is_gutenberg = (
+            self.source == "Project Gutenberg"
+            or "gutenberg" in str(self.source).lower()
+            or any("gutenberg" in str(v).lower() for v in self.formats.values())
+        )
+        if self.epub_url or is_gutenberg:
+            fmts.append("EPUB")
+        if self.pdf_url:
+            fmts.append("PDF")
+        if self.html_url:
+            fmts.append("HTML")
+        if self.text_url or is_gutenberg:
+            if "Plain Text" not in fmts:
+                fmts.append("Plain Text")
+
+        if not fmts:
+            for k in self.formats:
+                clean = k.split("/")[-1].replace("+zip", "").upper()
+                if clean and clean not in fmts:
+                    fmts.append(clean)
+        return fmts or ["EPUB"]
+
 
 @dataclass(frozen=True)
 class CatalogPage:
@@ -849,8 +875,9 @@ def download_catalog_book(
     dest_dir: Path,
     progress_cb=None,
     timeout: float = 30.0,
+    preferred_format: str | None = None,
 ) -> Path:
-    """Download the chosen catalog book with multi-mirror resilience (prefers EPUB, falls back to TXT/PDF/HTML)."""
+    """Download the chosen catalog book with multi-mirror resilience (honors preferred_format if available)."""
     candidates: list[str] = []
 
     b_id = str(book.id).strip()
@@ -860,30 +887,56 @@ def download_catalog_book(
         or any("gutenberg" in str(v).lower() for v in book.formats.values())
     )
 
+    pref = (preferred_format or "").strip().upper()
+    wants_pdf = "PDF" in pref
+    wants_html = "HTML" in pref
+    wants_txt = "TXT" in pref or "TEXT" in pref or "PLAIN" in pref
+    wants_epub = "EPUB" in pref
+
     if is_gutenberg:
         # Extract numeric Gutenberg book ID
         match = re.search(r"/epub/(\d+)|/ebooks/(\d+)|pg(\d+)", f"{book.epub_url or ''} {book.text_url or ''} {b_id}")
         digit_id = (next((g for g in match.groups() if g is not None), None) if match else None) or (b_id if b_id.isdigit() else None)
+
+        epub_cands: list[str] = []
+        txt_cands: list[str] = []
+        pdf_cands: list[str] = []
+
         if digit_id:
             # Project Gutenberg Literary Archive Foundation (PGLAF) direct mirror.
             # Avoids Cloudflare rate-limiting / HTTP 503 Service Unavailable on www.gutenberg.org
-            candidates.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}.epub")
-            candidates.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}-images.epub")
-            if book.epub_url and book.epub_url not in candidates:
-                candidates.append(book.epub_url)
-            candidates.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}.txt")
-            if book.text_url and book.text_url not in candidates:
-                candidates.append(book.text_url)
+            epub_cands.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}.epub")
+            epub_cands.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}-images.epub")
+            txt_cands.append(f"https://gutenberg.pglaf.org/cache/epub/{digit_id}/pg{digit_id}.txt")
+
+        if book.epub_url and book.epub_url not in epub_cands:
+            epub_cands.append(book.epub_url)
+        if book.text_url and book.text_url not in txt_cands:
+            txt_cands.append(book.text_url)
+        if book.pdf_url and book.pdf_url not in pdf_cands:
+            pdf_cands.append(book.pdf_url)
+
+        if wants_txt:
+            candidates.extend(txt_cands + epub_cands + pdf_cands)
+        elif wants_pdf:
+            candidates.extend(pdf_cands + epub_cands + txt_cands)
+        else:
+            candidates.extend(epub_cands + txt_cands + pdf_cands)
 
     if not candidates:
-        if book.epub_url:
-            candidates.append(book.epub_url)
-        if book.pdf_url and book.pdf_url not in candidates:
-            candidates.append(book.pdf_url)
-        if book.html_url and book.html_url not in candidates:
-            candidates.append(book.html_url)
-        if book.text_url and book.text_url not in candidates:
-            candidates.append(book.text_url)
+        ordered_sources: list[str | None] = []
+        if wants_pdf:
+            ordered_sources = [book.pdf_url, book.epub_url, book.html_url, book.text_url]
+        elif wants_html:
+            ordered_sources = [book.html_url, book.epub_url, book.pdf_url, book.text_url]
+        elif wants_txt:
+            ordered_sources = [book.text_url, book.epub_url, book.pdf_url, book.html_url]
+        else:
+            ordered_sources = [book.epub_url, book.pdf_url, book.html_url, book.text_url]
+
+        for u in ordered_sources:
+            if u and u not in candidates:
+                candidates.append(u)
 
     if not candidates:
         raise ValueError(f"No suitable download format found for '{book.title}'")
@@ -945,12 +998,32 @@ def download_catalog_book(
                 last_error = exc
                 continue
 
-        ext = (
-            ".pdf" if "pdf" in candidate_url.lower()
-            else (".epub" if "epub" in candidate_url.lower()
-            else (".html" if "html" in candidate_url.lower()
-            else (".txt" if "txt" in candidate_url.lower() else ".epub")))
-        )
+        parsed_path = urllib.parse.urlparse(candidate_url).path.lower()
+        last_seg = parsed_path.split("/")[-1]
+        if last_seg.endswith(".pdf") or "pdf" in last_seg:
+            ext = ".pdf"
+        elif last_seg.endswith(".txt") or "txt" in last_seg:
+            ext = ".txt"
+        elif last_seg.endswith((".html", ".htm")) or "html" in last_seg:
+            ext = ".html"
+        elif last_seg.endswith(".epub") or "epub" in last_seg:
+            ext = ".epub"
+        elif ".pdf" in parsed_path:
+            ext = ".pdf"
+        elif ".txt" in parsed_path:
+            ext = ".txt"
+        elif ".html" in parsed_path or ".htm" in parsed_path:
+            ext = ".html"
+        elif ".epub" in parsed_path:
+            ext = ".epub"
+        elif wants_txt:
+            ext = ".txt"
+        elif wants_pdf:
+            ext = ".pdf"
+        elif wants_html:
+            ext = ".html"
+        else:
+            ext = ".epub"
         filename = f"{safe_title}_{clean_id}{ext}"
         target_path = dest_dir / filename
         temp_path = dest_dir / f"{filename}.part"

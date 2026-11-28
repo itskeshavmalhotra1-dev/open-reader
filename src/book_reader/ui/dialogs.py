@@ -1455,6 +1455,16 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.details_ctrl.SetName("Details")
         vbox.Add(self.details_ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
 
+        # Format selector row
+        fmt_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        fmt_lbl = wx.StaticText(panel, label="&Format:")
+        self.format_choice = wx.Choice(panel, choices=[])
+        self.format_choice.SetName("Format")
+        self.format_choice.Enable(False)
+        fmt_sizer.Add(fmt_lbl, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        fmt_sizer.Add(self.format_choice, 1, wx.ALIGN_CENTER_VERTICAL)
+        vbox.Add(fmt_sizer, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+
         # Buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         self.download_btn = wx.Button(panel, wx.ID_OK, "&Download and Read")
@@ -1476,6 +1486,7 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.next_page_btn.Bind(wx.EVT_BUTTON, self._on_next_page)
         self.results_list.Bind(wx.EVT_LISTBOX, self._on_select)
         self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self._on_download)
+        self.format_choice.Bind(wx.EVT_CHOICE, self._on_format_changed)
         self.download_btn.Bind(wx.EVT_BUTTON, self._on_download)
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
@@ -1593,6 +1604,8 @@ class OnlineLibrariesDialog(wx.Dialog):
         self.status_lbl.SetLabel(f"{msg} (Loading Page {self._current_page})...")
 
         self.results_list.Clear()
+        self.format_choice.Clear()
+        self.format_choice.Enable(False)
         self.download_btn.Enable(False)
         self.search_btn.Enable(False)
         self.prev_page_btn.Enable(False)
@@ -1633,6 +1646,8 @@ class OnlineLibrariesDialog(wx.Dialog):
 
         self.results_list.Clear()
         if not page_data.books:
+            self.format_choice.Clear()
+            self.format_choice.Enable(False)
             self.status_lbl.SetLabel("No books found matching query in this library.")
             return
 
@@ -1667,20 +1682,53 @@ class OnlineLibrariesDialog(wx.Dialog):
         idx = self.results_list.GetSelection()
         if 0 <= idx < len(self.books):
             b = self.books[idx]
-            fmt = (
-                "EPUB" if b.epub_url
-                else ("PDF" if getattr(b, "pdf_url", None)
-                else ("HTML" if getattr(b, "html_url", None)
-                else ("TXT" if b.text_url else "Unknown")))
+            available = b.available_formats
+            prev_sel = (
+                self.format_choice.GetStringSelection()
+                if self.format_choice.GetSelection() != wx.NOT_FOUND
+                else ""
+            )
+            self.format_choice.Clear()
+            if available:
+                self.format_choice.Append(available)
+                if prev_sel in available:
+                    self.format_choice.SetStringSelection(prev_sel)
+                else:
+                    self.format_choice.SetSelection(0)
+                self.format_choice.Enable(True)
+            else:
+                self.format_choice.Enable(False)
+
+            current_fmt = (
+                self.format_choice.GetStringSelection()
+                or (available[0] if available else "Unknown")
             )
             details = (
                 f"Title: {b.title}\n"
                 f"Author: {b.author_display}\n"
-                f"Library: {b.source} | Format: {fmt}"
+                f"Library: {b.source} | Format: {current_fmt}"
             )
             self.details_ctrl.SetValue(details)
         else:
+            self.format_choice.Clear()
+            self.format_choice.Enable(False)
             self.details_ctrl.SetValue("")
+
+    def _on_format_changed(self, _event: wx.Event) -> None:
+        idx = self.results_list.GetSelection()
+        if 0 <= idx < len(self.books):
+            b = self.books[idx]
+            current_fmt = (
+                self.format_choice.GetStringSelection()
+                if self.format_choice.GetSelection() != wx.NOT_FOUND
+                else "Default"
+            )
+            details = (
+                f"Title: {b.title}\n"
+                f"Author: {b.author_display}\n"
+                f"Library: {b.source} | Format: {current_fmt}"
+            )
+            self.details_ctrl.SetValue(details)
 
     def _on_download(self, _event: wx.Event) -> None:
         from book_reader.backend.gutenberg import download_catalog_book
@@ -1691,9 +1739,15 @@ class OnlineLibrariesDialog(wx.Dialog):
             return
 
         book = self.books[idx]
+        chosen_fmt = (
+            self.format_choice.GetStringSelection()
+            if self.format_choice.IsEnabled()
+            and self.format_choice.GetSelection() != wx.NOT_FOUND
+            else None
+        )
         progress = wx.ProgressDialog(
             "Downloading Book",
-            f"Downloading '{book.title}' from {book.source}...",
+            f"Downloading '{book.title}' from {book.source} ({chosen_fmt or 'default'})...",
             maximum=100,
             parent=self,
             style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
@@ -1706,7 +1760,12 @@ class OnlineLibrariesDialog(wx.Dialog):
                         pct = min(99, int((dl * 100) / total))
                         wx.CallAfter(progress.Update, pct, f"Downloaded {dl // 1024} KB of {total // 1024} KB...")
 
-                path = download_catalog_book(book, self.download_dir, progress_cb=on_progress)
+                path = download_catalog_book(
+                    book,
+                    self.download_dir,
+                    progress_cb=on_progress,
+                    preferred_format=chosen_fmt,
+                )
                 wx.CallAfter(self._download_complete, progress, path)
             except Exception as e:
                 wx.CallAfter(self._download_failed, progress, str(e))

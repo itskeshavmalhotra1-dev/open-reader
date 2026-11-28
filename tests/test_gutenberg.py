@@ -516,3 +516,124 @@ def test_download_ncbi_printable_html_mock(tmp_path: Path) -> None:
         assert out_file.suffix == ".html"
         assert "Medical text content" in out_file.read_text(encoding="utf-8")
 
+
+def test_catalog_book_available_formats() -> None:
+    from book_reader.backend.gutenberg import CatalogBook
+
+    # Multi-format book (e.g. Internet Archive or Gutenberg)
+    book_multi = CatalogBook(
+        id="book_1",
+        title="Sample Book",
+        authors=["Author One"],
+        languages=["en"],
+        formats={
+            "application/epub+zip": "https://example.com/book.epub",
+            "application/pdf": "https://example.com/book.pdf",
+            "text/plain": "https://example.com/book.txt",
+        },
+        source="Open Library / Internet Archive",
+    )
+    fmts = book_multi.available_formats
+    assert "EPUB" in fmts
+    assert "PDF" in fmts
+    assert "Plain Text" in fmts
+
+    # PDF only (e.g. OpenStax)
+    book_pdf = CatalogBook(
+        id="openstax_1",
+        title="College Physics",
+        authors=["OpenStax"],
+        languages=["en"],
+        formats={"application/pdf": "https://openstax.org/physics.pdf"},
+        source="OpenStax (Academic Textbooks)",
+    )
+    assert book_pdf.available_formats == ["PDF"]
+
+    # HTML only (e.g. Wikisource)
+    book_html = CatalogBook(
+        id="wiki_1",
+        title="Godan",
+        authors=["Premchand"],
+        languages=["hi"],
+        formats={"text/html": "https://hi.wikisource.org/w/api.php?action=parse"},
+        source="Wikisource (Hindi, Urdu, English)",
+    )
+    assert book_html.available_formats == ["HTML"]
+
+
+def test_download_catalog_book_honors_preferred_format(tmp_path: Path) -> None:
+    from book_reader.backend.gutenberg import CatalogBook, download_catalog_book
+
+    book = CatalogBook(
+        id=1234,
+        title="Multi Format Book",
+        authors=["Author"],
+        languages=["en"],
+        formats={
+            "application/epub+zip": "https://www.gutenberg.org/ebooks/1234.epub3.images",
+            "text/plain": "https://www.gutenberg.org/ebooks/1234.txt.utf-8",
+            "application/pdf": "https://example.com/1234.pdf",
+        },
+        source="Project Gutenberg",
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.read.side_effect = [b"txt content", b""]
+    mock_resp.headers = {"Content-Length": "11"}
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp) as mock_url:
+        out_file = download_catalog_book(book, tmp_path, preferred_format="Plain Text")
+        assert out_file.exists()
+        assert out_file.suffix == ".txt"
+        called_req = mock_url.call_args[0][0]
+        assert "pg1234.txt" in called_req.full_url or "1234.txt" in called_req.full_url
+
+
+def test_online_libraries_dialog_format_selector(tmp_path: Path) -> None:
+    import wx
+    from book_reader.backend.gutenberg import CatalogBook, CatalogPage
+    from book_reader.ui.dialogs import OnlineLibrariesDialog
+
+    app = wx.App.Get() or wx.App(False)
+    dlg = OnlineLibrariesDialog(None, tmp_path)
+    try:
+        assert hasattr(dlg, "format_choice")
+        assert not dlg.format_choice.IsEnabled()
+
+        # Mock results population
+        book = CatalogBook(
+            id="test_book",
+            title="Accessible Reading",
+            authors=["A. Tester"],
+            languages=["en"],
+            formats={
+                "application/epub+zip": "https://example.com/test.epub",
+                "application/pdf": "https://example.com/test.pdf",
+            },
+            source="Open Library / Internet Archive",
+        )
+        fake_page = CatalogPage(
+            books=[book],
+            total_count=1,
+            current_page=1,
+            has_next=False,
+            has_previous=False,
+        )
+        dlg._populate_results(fake_page, dlg._search_seq)
+
+        # Format choice should now have EPUB and PDF
+        assert dlg.format_choice.IsEnabled()
+        choices = [dlg.format_choice.GetString(i) for i in range(dlg.format_choice.GetCount())]
+        assert "EPUB" in choices
+        assert "PDF" in choices
+        assert dlg.format_choice.GetStringSelection() == "EPUB"
+
+        # Change format choice to PDF
+        dlg.format_choice.SetStringSelection("PDF")
+        dlg._on_format_changed(None)
+        assert "Format: PDF" in dlg.details_ctrl.GetValue()
+    finally:
+        dlg.Destroy()
+
+
