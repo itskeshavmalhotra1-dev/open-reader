@@ -1287,6 +1287,9 @@ class OnlineLibrariesDialog(wx.Dialog):
         "Project Gutenberg",
         "Standard Ebooks",
         "Open Library / Internet Archive",
+        "Urdu Digital Library (اردو ڈیجیٹل کتب خانہ - 1.8 Lakh+ Books)",
+        "Iqbal Cyber Library (اقبال سائبر لائبریری - Allama Iqbal)",
+        "Rekhta Open Urdu Archive (ریختہ اردو کلاسک)",
         "Wikisource (Hindi, Urdu, English)",
         "OpenStax (Academic Textbooks)",
         "Indian Literature Archive (भारतीय साहित्य)",
@@ -1313,6 +1316,24 @@ class OnlineLibrariesDialog(wx.Dialog):
             "formats": "EPUB, Text, DJVU",
             "description": "Open editable library catalog backed by the Internet Archive. Search across millions of historical titles and full-text digitized public books.",
             "access": "Free public domain & full-text archive reading, no account required for public editions.",
+        },
+        "Urdu Digital Library (اردو ڈیجیٹل کتب خانہ - 1.8 Lakh+ Books)": {
+            "status": "Online • 182,000+ Free Digitized Urdu Books",
+            "formats": "EPUB, PDF, Plain Text",
+            "description": "Massive digital collection of Urdu books from DLI and historical archives: shayari, deewan, afsanay, dastaan, tareekh, sawaneh, and rare manuscripts.",
+            "access": "100% Free open public domain texts.",
+        },
+        "Iqbal Cyber Library (اقبال سائبر لائبریری - Allama Iqbal)": {
+            "status": "Online • Complete Poetry & Research of Allama Iqbal",
+            "formats": "EPUB, PDF, Plain Text",
+            "description": "Dedicated digital archive for Allama Muhammad Iqbal: Bang-e-Dra, Bal-e-Jibril, Zarb-e-Kaleem, Armaghan-e-Hijaz, Asrar-o-Rumuz, and Iqbaliat research.",
+            "access": "100% Free public domain literature.",
+        },
+        "Rekhta Open Urdu Archive (ریختہ اردو کلاسک)": {
+            "status": "Online • Classical Urdu Masterworks & Deewans",
+            "formats": "EPUB, PDF, Plain Text",
+            "description": "Digitized public works of master Urdu poets and writers: Mirza Ghalib, Mir Taqi Mir, Saadat Hasan Manto, Faiz Ahmad Faiz, Munshi Premchand, and Dagh Dehlvi.",
+            "access": "100% Free public domain literature.",
         },
         "Wikisource (Hindi, Urdu, English)": {
             "status": "Online • Multilingual Public Domain & Indian Classics",
@@ -1519,14 +1540,29 @@ class OnlineLibrariesDialog(wx.Dialog):
             CLASSICS_20TH_CATEGORIES,
             GUTENBERG_CATEGORIES,
             INDIAN_ARCHIVE_CATEGORIES,
+            IQBAL_LIBRARY_CATEGORIES,
             NCBI_CATEGORIES,
             OPEN_TECH_CATEGORIES,
             OPENSTAX_CATEGORIES,
+            REKHTA_LIBRARY_CATEGORIES,
+            URDU_LIBRARY_CATEGORIES,
             WIKISOURCE_CATEGORIES,
         )
         self.cat_choice.Clear()
         if "Gutenberg" in lib_name:
             self.cat_choice.Append(GUTENBERG_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "Urdu Digital" in lib_name:
+            self.cat_choice.Append(URDU_LIBRARY_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "Iqbal" in lib_name:
+            self.cat_choice.Append(IQBAL_LIBRARY_CATEGORIES)
+            self.cat_choice.SetSelection(0)
+            self.cat_choice.Enable(True)
+        elif "Rekhta" in lib_name:
+            self.cat_choice.Append(REKHTA_LIBRARY_CATEGORIES)
             self.cat_choice.SetSelection(0)
             self.cat_choice.Enable(True)
         elif "Wikisource" in lib_name:

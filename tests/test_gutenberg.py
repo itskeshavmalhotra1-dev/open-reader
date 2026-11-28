@@ -726,4 +726,89 @@ def test_download_catalog_book_handles_401_gracefully(tmp_path: Path) -> None:
         assert "restricted lending-library" in str(exc_info.value)
 
 
+def test_fetch_urdu_libraries_mock(tmp_path: Path) -> None:
+    from book_reader.backend.gutenberg import (
+        fetch_iqbal_library_page,
+        fetch_online_catalog_page,
+        fetch_rekhta_library_page,
+        fetch_urdu_library_page,
+    )
+
+    sample_search = {
+        "response": {
+            "numFound": 50,
+            "docs": [
+                {
+                    "identifier": "bang_e_dra_01",
+                    "title": "Bang-e-Dra",
+                    "creator": ["Allama Muhammad Iqbal"],
+                }
+            ],
+        }
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(sample_search).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("book_reader.backend.gutenberg.urlopen", return_value=mock_resp):
+        # 1. Urdu Digital Library
+        page_urdu = fetch_urdu_library_page("Iqbal", category="Shayari & Ghazal (اردو شاعری و غزل)")
+        assert len(page_urdu.books) == 1
+        assert page_urdu.books[0].title == "Bang-e-Dra"
+        assert "Urdu Digital Library" in page_urdu.books[0].source
+
+        # 2. Iqbal Cyber Library
+        page_iqbal = fetch_iqbal_library_page(category="Bang-e-Dra (بانگِ درا)")
+        assert len(page_iqbal.books) == 1
+        assert "Iqbal Cyber Library" in page_iqbal.books[0].source
+
+        # 3. Rekhta Open Urdu Archive
+        page_rekhta = fetch_rekhta_library_page(category="Mirza Ghalib (دیوانِ غالب)")
+        assert len(page_rekhta.books) == 1
+        assert "Rekhta" in page_rekhta.books[0].source
+
+        # 4. Unified dispatcher routing
+        p1 = fetch_online_catalog_page("Urdu Digital Library (اردو ڈیجیٹل کتب خانہ - 1.8 Lakh+ Books)", query="Ghalib")
+        assert len(p1.books) == 1
+        p2 = fetch_online_catalog_page("Iqbal Cyber Library (اقبال سائبر لائبریری - Allama Iqbal)")
+        assert len(p2.books) == 1
+        p3 = fetch_online_catalog_page("Rekhta Open Urdu Archive (ریختہ اردو کلاسک)")
+        assert len(p3.books) == 1
+
+
+def test_online_libraries_dialog_urdu_switching(tmp_path: Path) -> None:
+    import wx
+    from book_reader.ui.dialogs import OnlineLibrariesDialog
+
+    app = wx.App.Get() or wx.App(False)
+    dlg = OnlineLibrariesDialog(None, tmp_path)
+    try:
+        # Check Urdu Digital Library
+        idx_urdu = dlg.lib_choice.FindString("Urdu Digital Library (اردو ڈیجیٹل کتب خانہ - 1.8 Lakh+ Books)")
+        assert idx_urdu != wx.NOT_FOUND
+        dlg.lib_choice.SetSelection(idx_urdu)
+        dlg._on_lib_changed(None)
+        assert "182,000+" in dlg.lib_info_ctrl.GetValue()
+        assert dlg.cat_choice.IsEnabled()
+
+        # Check Iqbal Cyber Library
+        idx_iqbal = dlg.lib_choice.FindString("Iqbal Cyber Library (اقبال سائبر لائبریری - Allama Iqbal)")
+        assert idx_iqbal != wx.NOT_FOUND
+        dlg.lib_choice.SetSelection(idx_iqbal)
+        dlg._on_lib_changed(None)
+        assert "Bang-e-Dra" in dlg.lib_info_ctrl.GetValue()
+        assert dlg.cat_choice.IsEnabled()
+
+        # Check Rekhta Open Urdu Archive
+        idx_rekhta = dlg.lib_choice.FindString("Rekhta Open Urdu Archive (ریختہ اردو کلاسک)")
+        assert idx_rekhta != wx.NOT_FOUND
+        dlg.lib_choice.SetSelection(idx_rekhta)
+        dlg._on_lib_changed(None)
+        assert "Mirza Ghalib" in dlg.lib_info_ctrl.GetValue()
+        assert dlg.cat_choice.IsEnabled()
+    finally:
+        dlg.Destroy()
+
+
+
 

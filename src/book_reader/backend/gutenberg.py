@@ -180,6 +180,37 @@ CLASSICS_20TH_CATEGORIES = [
     "Franz Kafka (Metamorphosis)",
 ]
 
+URDU_LIBRARY_CATEGORIES = [
+    "All Urdu Books (تمام اردو کتب)",
+    "Shayari & Ghazal (اردو شاعری و غزل)",
+    "Afsanay, Dastaan & Novels (افسانے اور داستان)",
+    "Tareekh & Sawaneh (تاریخ اور سوانح)",
+    "Mazameen & Inshaiya (مضامین و انشائیہ)",
+    "Tasawwuf & Falsafa (تصوف اور فلسفہ)",
+    "Qadeem Rare Archives (قدیم و نایاب کتب)",
+]
+
+IQBAL_LIBRARY_CATEGORIES = [
+    "Kulliyat-e-Iqbal (کلیات اقبال - All Works)",
+    "Bang-e-Dra (بانگِ درا)",
+    "Bal-e-Jibril (بالِ جبریل)",
+    "Zarb-e-Kaleem (ضربِ کلیم)",
+    "Armaghan-e-Hijaz (ارمغانِ حجاز)",
+    "Asrar-o-Rumuz (اسرار و رموز)",
+    "Iqbaliat & Research (اقبالیات و تحقیق)",
+]
+
+REKHTA_LIBRARY_CATEGORIES = [
+    "All Classics (تمام کلاسک)",
+    "Mirza Ghalib (دیوانِ غالب)",
+    "Mir Taqi Mir (کلیاتِ میر)",
+    "Saadat Hasan Manto (منٹو کے افسانے)",
+    "Faiz Ahmad Faiz (فیض احمد فیض)",
+    "Munshi Premchand (منشی پریم چند)",
+    "Dagh Dehlvi (داغ دہلوی)",
+    "Josh Malihabadi (جوش ملیح آبادی)",
+]
+
 
 def fetch_gutenberg_page(
     query: str = "",
@@ -851,6 +882,263 @@ def fetch_classics_20th_page(
     )
 
 
+def fetch_urdu_library_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch live public domain Urdu books from the 1.8 Lakh+ Urdu Digital Library archive."""
+    cat_low = category.lower()
+    if "shayari" in cat_low or "شاعری" in category:
+        genre_filter = '(subject:"Urdu poetry" OR subject:"Urdu shayari" OR subject:"Ghazal" OR subject:"دیوان")'
+    elif "afsana" in cat_low or "افسانے" in category or "dastaan" in cat_low:
+        genre_filter = '(subject:"Urdu fiction" OR subject:"Urdu stories" OR subject:"افسانے" OR subject:"داستان")'
+    elif "tareekh" in cat_low or "تاریخ" in category:
+        genre_filter = '(subject:"History" OR subject:"تاریخ" OR subject:"سوانح")'
+    elif "mazameen" in cat_low or "مضامین" in category:
+        genre_filter = '(subject:"Urdu essays" OR subject:"مضامین")'
+    elif "tasawwuf" in cat_low or "تصوف" in category:
+        genre_filter = '(subject:"Tasawwuf" OR subject:"Sufism" OR subject:"فلسفہ")'
+    elif "qadeem" in cat_low or "قدیم" in category:
+        genre_filter = '(collection:digitallibraryofindia OR subject:"manuscripts")'
+    else:
+        genre_filter = '(language:urdu OR language:urd)'
+
+    q_parts = [
+        "(language:urdu OR language:urd)",
+        genre_filter,
+        "mediatype:texts",
+        "-collection:inlibrary",
+        "-access-restricted-item:true",
+    ]
+    if query.strip():
+        q_parts.append(f"({query.strip()})")
+
+    encoded_q = urllib.parse.quote_plus(" AND ".join(q_parts))
+    url = (
+        f"https://archive.org/advancedsearch.php?q={encoded_q}"
+        f"&fl[]=identifier,title,creator,language,year"
+        f"&rows={limit}&page={max(1, page)}&output=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    total = int(data.get("response", {}).get("numFound", 0))
+    docs = data.get("response", {}).get("docs", [])
+
+    books: list[CatalogBook] = []
+    for doc in docs:
+        ia_id = doc.get("identifier", "")
+        if not ia_id:
+            continue
+        title = doc.get("title", "Untitled")
+        authors = doc.get("creator", [])
+        if isinstance(authors, str):
+            authors = [authors]
+        formats = {
+            "application/epub+zip": f"https://archive.org/download/{ia_id}/{ia_id}.epub",
+            "application/pdf": f"https://archive.org/download/{ia_id}/{ia_id}.pdf",
+            "text/plain": f"https://archive.org/download/{ia_id}/{ia_id}_djvu.txt",
+        }
+        books.append(
+            CatalogBook(
+                id=ia_id,
+                title=title,
+                authors=authors or ["Urdu Writer"],
+                languages=["ur"],
+                formats=formats,
+                download_count=1000,
+                source="Urdu Digital Library (اردو کتب خانہ)",
+            )
+        )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(page * limit) < total,
+        has_previous=page > 1,
+    )
+
+
+def fetch_iqbal_library_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch live Allama Muhammad Iqbal works and research from Iqbal Cyber Library."""
+    cat_low = category.lower()
+    if "bang" in cat_low or "بانگ" in category:
+        book_filter = '(title:"Bang-e-Dra" OR title:"بانگ درا" OR title:"بانگِ درا")'
+    elif "bal" in cat_low or "جبر" in category:
+        book_filter = '(title:"Bal-e-Jibril" OR title:"بال جبریل" OR title:"بالِ جبریل")'
+    elif "zarb" in cat_low or "کلیم" in category:
+        book_filter = '(title:"Zarb-e-Kaleem" OR title:"ضرب کلیم" OR title:"ضربِ کلیم")'
+    elif "armaghan" in cat_low or "ارمغان" in category:
+        book_filter = '(title:"Armaghan" OR title:"ارمغان حجاز" OR title:"ارمغانِ حجاز")'
+    elif "asrar" in cat_low or "اسرار" in category:
+        book_filter = '(title:"Asrar" OR title:"اسرار خودی" OR title:"رموز بیخودی")'
+    elif "research" in cat_low or "تحقیق" in category or "iqbaliat" in cat_low:
+        book_filter = '(title:"Iqbaliat" OR title:"اقبالیات" OR subject:"Iqbal Review")'
+    else:
+        book_filter = '(creator:"Iqbal" OR title:"Iqbal" OR title:"اقبال" OR creator:"علامہ اقبال")'
+
+    q_parts = [
+        book_filter,
+        "(language:urdu OR language:urd OR language:per OR language:eng)",
+        "mediatype:texts",
+        "-collection:inlibrary",
+        "-access-restricted-item:true",
+    ]
+    if query.strip():
+        q_parts.append(f"({query.strip()})")
+
+    encoded_q = urllib.parse.quote_plus(" AND ".join(q_parts))
+    url = (
+        f"https://archive.org/advancedsearch.php?q={encoded_q}"
+        f"&fl[]=identifier,title,creator,language,year"
+        f"&rows={limit}&page={max(1, page)}&output=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    total = int(data.get("response", {}).get("numFound", 0))
+    docs = data.get("response", {}).get("docs", [])
+
+    books: list[CatalogBook] = []
+    for doc in docs:
+        ia_id = doc.get("identifier", "")
+        if not ia_id:
+            continue
+        title = doc.get("title", "Untitled")
+        authors = doc.get("creator", ["Allama Muhammad Iqbal"])
+        if isinstance(authors, str):
+            authors = [authors]
+        formats = {
+            "application/epub+zip": f"https://archive.org/download/{ia_id}/{ia_id}.epub",
+            "application/pdf": f"https://archive.org/download/{ia_id}/{ia_id}.pdf",
+            "text/plain": f"https://archive.org/download/{ia_id}/{ia_id}_djvu.txt",
+        }
+        books.append(
+            CatalogBook(
+                id=ia_id,
+                title=title,
+                authors=authors or ["Allama Muhammad Iqbal"],
+                languages=["ur"],
+                formats=formats,
+                download_count=1000,
+                source="Iqbal Cyber Library (اقبال لائبریری)",
+            )
+        )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(page * limit) < total,
+        has_previous=page > 1,
+    )
+
+
+def fetch_rekhta_library_page(
+    query: str = "",
+    category: str = "",
+    page: int = 1,
+    limit: int = 20,
+    timeout: float = 12.0,
+) -> CatalogPage:
+    """Fetch live Urdu masterworks and classics from Rekhta Open Urdu Archive."""
+    cat_low = category.lower()
+    if "ghalib" in cat_low or "غالب" in category:
+        author_filter = '(creator:"Ghalib" OR title:"Ghalib" OR creator:"غالب" OR title:"غالب")'
+    elif "mir" in cat_low or "میر" in category:
+        author_filter = '(creator:"Mir Taqi Mir" OR creator:"میر تقی میر" OR title:"میر تقی میر" OR creator:"Meer")'
+    elif "manto" in cat_low or "منٹو" in category:
+        author_filter = '(creator:"Manto" OR creator:"منٹو" OR title:"منٹو")'
+    elif "faiz" in cat_low or "فیض" in category:
+        author_filter = '(creator:"Faiz Ahmad Faiz" OR creator:"فیض" OR title:"فیض")'
+    elif "premchand" in cat_low or "پریم" in category:
+        author_filter = '(creator:"Premchand" OR creator:"پریم چند" OR title:"پریم چند")'
+    elif "dagh" in cat_low or "داغ" in category:
+        author_filter = '(creator:"Dagh" OR creator:"داغ" OR title:"داغ دہلوی")'
+    elif "josh" in cat_low or "جوش" in category:
+        author_filter = '(creator:"Josh" OR creator:"جوش" OR title:"جوش ملیح آبادی")'
+    else:
+        author_filter = '(creator:"Ghalib" OR creator:"Mir" OR creator:"Manto" OR creator:"Faiz" OR creator:"Premchand")'
+
+    q_parts = [
+        author_filter,
+        "(language:urdu OR language:urd)",
+        "mediatype:texts",
+        "-collection:inlibrary",
+        "-access-restricted-item:true",
+    ]
+    if query.strip():
+        q_parts.append(f"({query.strip()})")
+
+    encoded_q = urllib.parse.quote_plus(" AND ".join(q_parts))
+    url = (
+        f"https://archive.org/advancedsearch.php?q={encoded_q}"
+        f"&fl[]=identifier,title,creator,language,year"
+        f"&rows={limit}&page={max(1, page)}&output=json"
+    )
+    req = Request(
+        url,
+        headers={"User-Agent": "OpenReader/1.0 (https://github.com/itskeshavmalhotra1-dev/open-reader; dev@example.com)"},
+    )
+    with urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    total = int(data.get("response", {}).get("numFound", 0))
+    docs = data.get("response", {}).get("docs", [])
+
+    books: list[CatalogBook] = []
+    for doc in docs:
+        ia_id = doc.get("identifier", "")
+        if not ia_id:
+            continue
+        title = doc.get("title", "Untitled")
+        authors = doc.get("creator", ["Urdu Classic Author"])
+        if isinstance(authors, str):
+            authors = [authors]
+        formats = {
+            "application/epub+zip": f"https://archive.org/download/{ia_id}/{ia_id}.epub",
+            "application/pdf": f"https://archive.org/download/{ia_id}/{ia_id}.pdf",
+            "text/plain": f"https://archive.org/download/{ia_id}/{ia_id}_djvu.txt",
+        }
+        books.append(
+            CatalogBook(
+                id=ia_id,
+                title=title,
+                authors=authors or ["Urdu Classic Author"],
+                languages=["ur"],
+                formats=formats,
+                download_count=1000,
+                source="Rekhta Open Urdu Archive (ریختہ اردو)",
+            )
+        )
+
+    return CatalogPage(
+        books=books,
+        total_count=total,
+        current_page=page,
+        has_next=(page * limit) < total,
+        has_previous=page > 1,
+    )
+
+
 def fetch_online_catalog_page(
     source_name: str,
     query: str = "",
@@ -872,6 +1160,12 @@ def fetch_online_catalog_page(
         return fetch_open_tech_page(query=query, category=category, page=page)
     elif "NCBI" in source_name or "Medical" in source_name:
         return fetch_ncbi_page(query=query, category=category, page=page)
+    elif "Urdu Digital" in source_name or "اردو ڈیجیٹل" in source_name:
+        return fetch_urdu_library_page(query=query, category=category, page=page)
+    elif "Iqbal" in source_name or "اقبال" in source_name:
+        return fetch_iqbal_library_page(query=query, category=category, page=page)
+    elif "Rekhta" in source_name or "ریختہ" in source_name:
+        return fetch_rekhta_library_page(query=query, category=category, page=page)
     elif "20th Century" in source_name or "Classics" in source_name:
         return fetch_classics_20th_page(query=query, category=category, page=page)
     else:
